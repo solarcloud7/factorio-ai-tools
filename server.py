@@ -17,10 +17,12 @@ mcp = FastMCP("Factorio AI Tools")
 db_path_factorio = os.path.join(os.path.dirname(os.path.abspath(__file__)), "factorio_lancedb")
 db_path_clusterio = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clusterio_lancedb")
 db_path_wiki = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wiki_lancedb")
+db_path_forum = os.path.join(os.path.dirname(os.path.abspath(__file__)), "forum_lancedb")
 
 db_factorio = lancedb.connect(db_path_factorio)
 db_clusterio = lancedb.connect(db_path_clusterio)
 db_wiki = lancedb.connect(db_path_wiki)
+db_forum = lancedb.connect(db_path_forum)
 
 try:
     table_factorio = db_factorio.open_table("docs")
@@ -39,6 +41,12 @@ try:
 except Exception as e:
     print(f"Warning: Could not open Factorio wiki table. Did you run ingest_wiki.py? Error: {e}")
     table_wiki = None
+
+try:
+    table_forum = db_forum.open_table("forum")
+except Exception as e:
+    print(f"Warning: Could not open Factorio forum table. Did you run ingest_forum.py? Error: {e}")
+    table_forum = None
 
 # Initialize embedding model globally
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -247,6 +255,49 @@ def search_factorio_wiki(queries: list[str], limit: int = 5) -> str:
         
     except Exception as e:
         return f"Error executing wiki search: {str(e)}"
+
+@mcp.tool()
+def search_factorio_forums(queries: list[str], limit: int = 5) -> str:
+    """
+    Search the official Factorio Forums (specifically Modding Help) for obscure bugs, community fixes, and undocumented tricks.
+    
+    Args:
+        queries: A list of search query strings to batch process.
+        limit: Maximum number of chunks to return per query (default 5, max 20).
+    """
+    if table_forum is None:
+        return "Error: Factorio Forum database table not found. Please run ingest_forum.py first."
+        
+    if not queries:
+        return "No queries provided."
+        
+    try:
+        limit = min(max(1, limit), 20)
+        
+        # Generate vectors
+        query_vecs = model.encode(queries, normalize_embeddings=True)
+        
+        all_formatted_chunks = []
+        
+        for idx, query_vec in enumerate(query_vecs):
+            q = table_forum.search(query_vec.tolist())
+            results = q.limit(limit).to_list()
+            
+            all_formatted_chunks.append(f"### Forum Results for query: '{queries[idx]}'")
+            
+            if len(results) == 0:
+                all_formatted_chunks.append("No results found.")
+            else:
+                for row in results:
+                    chunk = f"**{row['class_name']}**\n{row['file_path']}\n{row['content']}"
+                    all_formatted_chunks.append(chunk)
+            
+            all_formatted_chunks.append("---")
+            
+        return "\n\n".join(all_formatted_chunks)
+        
+    except Exception as e:
+        return f"Error executing forum search: {str(e)}"
 
 @mcp.tool()
 def decode_factorio_blueprint(blueprint_string: str) -> str:
