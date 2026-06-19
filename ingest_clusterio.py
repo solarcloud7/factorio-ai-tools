@@ -78,18 +78,60 @@ def extract_chunks(file_path):
         
     return chunks
 
-def main():
-    print("Finding TypeScript files...")
-    repo_path = "./clusterio"
-    ts_files = glob.glob(f"{repo_path}/**/*.ts", recursive=True)
-    print(f"Found {len(ts_files)} TypeScript files.")
+def extract_text_chunks(file_path):
+    try:
+        with open(file_path, 'r', encoding='utf8') as f:
+            content = f.read()
+    except UnicodeDecodeError:
+        return []
     
-    print("Parsing AST and extracting chunks...")
-    all_chunks = []
-    for f in ts_files:
-        all_chunks.extend(extract_chunks(f))
+    chunk_size = 1500
+    overlap = 200
+    chunks = []
+    
+    if len(content) == 0:
+        return []
         
-    print(f"Extracted {len(all_chunks)} total AST chunks.")
+    file_name = os.path.basename(file_path)
+    
+    i = 0
+    while i < len(content):
+        chunk_content = content[i:i+chunk_size]
+        content_hash = hashlib.md5(chunk_content.encode('utf8')).hexdigest()
+        
+        chunks.append({
+            "file_path": file_path,
+            "node_type": "text_file",
+            "node_name": file_name,
+            "content": chunk_content,
+            "hash": content_hash
+        })
+        i += (chunk_size - overlap)
+        
+    return chunks
+
+def main():
+    print("Finding files to ingest...")
+    repo_path = os.environ.get("CLUSTERIO_REPO", "./clusterio")
+    
+    extensions = ['*.ts', '*.js', '*.json', '*.md', '*.yml', '*.yaml', '*.lua', '*.sh', '*.bat', '*.ps1', '*.toml', '*.ini', 'Dockerfile']
+    all_files = []
+    for ext in extensions:
+        for f in glob.glob(f"{repo_path}/**/{ext}", recursive=True):
+            if "node_modules" not in f and ".git" not in f:
+                all_files.append(f)
+        
+    print(f"Found {len(all_files)} total files.")
+    
+    print("Extracting chunks...")
+    all_chunks = []
+    for f in all_files:
+        if f.endswith('.ts') or f.endswith('.js'):
+            all_chunks.extend(extract_chunks(f))
+        else:
+            all_chunks.extend(extract_text_chunks(f))
+            
+    print(f"Extracted {len(all_chunks)} total chunks.")
     
     print("Connecting to LanceDB...")
     db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clusterio_lancedb")
@@ -116,7 +158,7 @@ def main():
     model = SentenceTransformer("BAAI/bge-base-en-v1.5", device=device)
     
     print("Generating embeddings synchronously on the main thread (Deadlock safe!)...")
-    batch_size = 200
+    batch_size = 100
     
     for i in range(0, len(new_chunks), batch_size):
         print(f"Ingesting batch {i} to {i+batch_size}...")
@@ -131,6 +173,20 @@ def main():
         table.add(batch)
         
     print("Ingestion complete!")
+    
+    # Save version info
+    import json
+    package_json_path = os.path.join(repo_path, "package.json")
+    version = "unknown"
+    if os.path.exists(package_json_path):
+        try:
+            with open(package_json_path, "r", encoding="utf-8") as f:
+                version = json.load(f).get("version", "unknown")
+        except:
+            pass
+            
+    with open(os.path.join(db_path, "version.txt"), "w", encoding="utf-8") as f:
+        f.write(version)
 
 if __name__ == "__main__":
     main()

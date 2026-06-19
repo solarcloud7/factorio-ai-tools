@@ -1,26 +1,4 @@
-# Environments
 venv/
-env/
-.env
-.venv/
-env.bak/
-venv.bak/
-
-# Byte-compiled / optimized / DLL files
 __pycache__/
-*.py[cod]
-*$py.class
-
-# IDE / Editor
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS generated files
-.DS_Store
-Thumbs.db
-
-# NOTE: We intentionally DO NOT ignore factorio_lancedb and clusterio_lancedb
-# because we want to distribute the pre-computed embeddings to users so they
-# don't have to install PyTorch or run the heavy ingestion script!
+*.pyc
+.env
