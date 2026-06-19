@@ -2,6 +2,7 @@ import requests
 import json
 import os
 import time
+import hashlib
 import lancedb
 import torch
 from sentence_transformers import SentenceTransformer
@@ -16,8 +17,12 @@ class WikiDoc(LanceModel):
     vector: Vector(768)
     title: str
     url: str
+    content_hash: str
 
-def chunk_text(text, title, chunk_size=1500, overlap=200):
+def get_hash(text):
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+def chunk_text(text, title, content_hash, chunk_size=1500, overlap=200):
     chunks = []
     start = 0
     while start < len(text):
@@ -26,12 +31,29 @@ def chunk_text(text, title, chunk_size=1500, overlap=200):
         chunks.append({
             "text": f"# {title}\n\n{chunk}",
             "title": title,
-            "url": f"https://wiki.factorio.com/{title.replace(' ', '_')}"
+            "url": f"https://wiki.factorio.com/{title.replace(' ', '_')}",
+            "content_hash": content_hash
         })
         start += (chunk_size - overlap)
     return chunks
 
 def main():
+    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wiki_lancedb")
+    os.makedirs(db_path, exist_ok=True)
+    db = lancedb.connect(db_path)
+    
+    if "docs" in db.table_names():
+        table = db.open_table("docs")
+        if "content_hash" not in table.schema.names:
+            print("Dropping existing docs table to migrate to new schema...")
+            del table
+            db.drop_table("docs")
+            table = db.create_table("docs", schema=WikiDoc)
+    else:
+        table = db.create_table("docs", schema=WikiDoc)
+        
+    table = db.open_table("docs")
+
     session = requests.Session()
     session.headers.update({"User-Agent": "FactorioAIToolsBot/1.0 (https://github.com/factorio-ai-tools)"})
     
@@ -85,24 +107,27 @@ def main():
             
             if "parse" in data and "wikitext" in data["parse"]:
                 wikitext = data["parse"]["wikitext"]["*"]
-                chunks = chunk_text(wikitext, title)
+                chash = get_hash(wikitext)
+                
+                if len(table) > 0:
+                    existing = table.search().where(f"title = '{title}'").limit(1).to_list()
+                    if existing and existing[0].get('content_hash') == chash:
+                        print(f"Skipping {safe_title}, unchanged.")
+                        continue
+                    table.delete(f"title = '{title}'")
+                    
+                chunks = chunk_text(wikitext, title, chash)
                 all_chunks.extend(chunks)
         except Exception as e:
             print(f"Failed to fetch {title}: {e}")
             
         time.sleep(0.1) # Be nice to the wiki server
         
-    print(f"Extracted {len(all_chunks)} chunks total.")
+    print(f"Extracted {len(all_chunks)} new chunks total.")
     
-    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wiki_lancedb")
-    os.makedirs(db_path, exist_ok=True)
-    db = lancedb.connect(db_path)
-    
-    if "docs" in db.list_tables():
-        db.drop_table("docs")
-        
-    print("Creating table and generating embeddings (this may take a while)...")
-    table = db.create_table("docs", schema=WikiDoc)
+    if len(all_chunks) == 0:
+        print("Nothing new to ingest.")
+        return
     
     batch_size = 100
     for i in range(0, len(all_chunks), batch_size):

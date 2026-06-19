@@ -1,6 +1,7 @@
 import requests
 import json
 import os
+import hashlib
 import lancedb
 import torch
 from sentence_transformers import SentenceTransformer
@@ -18,6 +19,11 @@ class FactorioDoc(LanceModel):
     returns: str
     version: str
     url: str
+    source_url: str
+    content_hash: str
+
+def get_hash(text):
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 def format_type(t):
     if isinstance(t, str):
@@ -48,14 +54,7 @@ def format_type(t):
         return json.dumps(t)
     return str(t)
 
-def parse_runtime_api(url, version_name):
-    print(f"Downloading Runtime API doc from {url}...")
-    resp = requests.get(url)
-    if resp.status_code != 200:
-        print(f"Failed to fetch {url}")
-        return []
-        
-    data = resp.json()
+def parse_runtime_api(data, version_name, source_url, content_hash):
     chunks = []
     
     for cls in data.get('classes', []):
@@ -67,7 +66,9 @@ def parse_runtime_api(url, version_name):
             "class_name": class_name,
             "returns": "",
             "version": version_name,
-            "url": f"https://lua-api.factorio.com/{version_name}/classes/{class_name}.html"
+            "url": f"https://lua-api.factorio.com/{version_name}/classes/{class_name}.html",
+            "source_url": source_url,
+            "content_hash": content_hash
         })
         
         for method in cls.get('methods', []):
@@ -88,7 +89,9 @@ def parse_runtime_api(url, version_name):
                 "class_name": class_name,
                 "returns": ret_str,
                 "version": version_name,
-                "url": f"https://lua-api.factorio.com/{version_name}/classes/{class_name}.html#method_{method_name}"
+                "url": f"https://lua-api.factorio.com/{version_name}/classes/{class_name}.html#method_{method_name}",
+                "source_url": source_url,
+                "content_hash": content_hash
             })
             
         for attr in cls.get('attributes', []):
@@ -102,7 +105,9 @@ def parse_runtime_api(url, version_name):
                 "class_name": class_name,
                 "returns": a_type,
                 "version": version_name,
-                "url": f"https://lua-api.factorio.com/{version_name}/classes/{class_name}.html#{attr_name}"
+                "url": f"https://lua-api.factorio.com/{version_name}/classes/{class_name}.html#{attr_name}",
+                "source_url": source_url,
+                "content_hash": content_hash
             })
 
     for event in data.get('events', []):
@@ -116,7 +121,9 @@ def parse_runtime_api(url, version_name):
             "class_name": "",
             "returns": "",
             "version": version_name,
-            "url": f"https://lua-api.factorio.com/{version_name}/events.html#{event_name}"
+            "url": f"https://lua-api.factorio.com/{version_name}/events.html#{event_name}",
+            "source_url": source_url,
+            "content_hash": content_hash
         })
         
     for concept in data.get('concepts', []):
@@ -130,19 +137,14 @@ def parse_runtime_api(url, version_name):
             "class_name": "",
             "returns": c_type,
             "version": version_name,
-            "url": f"https://lua-api.factorio.com/{version_name}/concepts/{concept_name}.html"
+            "url": f"https://lua-api.factorio.com/{version_name}/concepts/{concept_name}.html",
+            "source_url": source_url,
+            "content_hash": content_hash
         })
         
     return chunks
 
-def parse_prototype_api(url, version_name):
-    print(f"Downloading Prototype API doc from {url}...")
-    resp = requests.get(url)
-    if resp.status_code != 200:
-        print(f"Failed to fetch {url}")
-        return []
-        
-    data = resp.json()
+def parse_prototype_api(data, version_name, source_url, content_hash):
     chunks = []
     
     for proto in data.get('prototypes', []):
@@ -154,7 +156,9 @@ def parse_prototype_api(url, version_name):
             "class_name": proto_name,
             "returns": "",
             "version": version_name,
-            "url": f"https://lua-api.factorio.com/{version_name}/prototypes/{proto_name}.html"
+            "url": f"https://lua-api.factorio.com/{version_name}/prototypes/{proto_name}.html",
+            "source_url": source_url,
+            "content_hash": content_hash
         })
         
         for prop in proto.get('properties', []):
@@ -168,7 +172,9 @@ def parse_prototype_api(url, version_name):
                 "class_name": proto_name,
                 "returns": p_type,
                 "version": version_name,
-                "url": f"https://lua-api.factorio.com/{version_name}/prototypes/{proto_name}.html#{prop_name}"
+                "url": f"https://lua-api.factorio.com/{version_name}/prototypes/{proto_name}.html#{prop_name}",
+                "source_url": source_url,
+                "content_hash": content_hash
             })
             
     for t in data.get('types', []):
@@ -182,12 +188,30 @@ def parse_prototype_api(url, version_name):
             "class_name": "",
             "returns": t_type,
             "version": version_name,
-            "url": f"https://lua-api.factorio.com/{version_name}/types/{t_name}.html"
+            "url": f"https://lua-api.factorio.com/{version_name}/types/{t_name}.html",
+            "source_url": source_url,
+            "content_hash": content_hash
         })
         
     return chunks
 
 def main():
+    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "factorio_lancedb")
+    os.makedirs(db_path, exist_ok=True)
+    db = lancedb.connect(db_path)
+    
+    if "docs" in db.table_names():
+        table = db.open_table("docs")
+        if "content_hash" not in table.schema.names:
+            print("Dropping existing docs table to migrate to new schema...")
+            del table
+            db.drop_table("docs")
+            table = db.create_table("docs", schema=FactorioDoc)
+    else:
+        table = db.create_table("docs", schema=FactorioDoc)
+        
+    table = db.open_table("docs")
+
     versions_to_scrape = ["1.1.110", "latest"]
     all_chunks = []
     
@@ -196,20 +220,28 @@ def main():
         rt_url = f"https://lua-api.factorio.com/{ver}/runtime-api.json"
         pt_url = f"https://lua-api.factorio.com/{ver}/prototype-api.json"
         
-        all_chunks.extend(parse_runtime_api(rt_url, ver))
-        all_chunks.extend(parse_prototype_api(pt_url, ver))
+        for url, parse_func in [(rt_url, parse_runtime_api), (pt_url, parse_prototype_api)]:
+            resp = requests.get(url)
+            if resp.status_code != 200:
+                print(f"Failed to fetch {url}")
+                continue
+                
+            chash = get_hash(resp.text)
+            
+            if len(table) > 0:
+                existing = table.search().where(f"source_url = '{url}'").limit(1).to_list()
+                if existing and existing[0].get('content_hash') == chash:
+                    print(f"Skipping {url}, content unchanged.")
+                    continue
+                table.delete(f"source_url = '{url}'")
+                
+            all_chunks.extend(parse_func(resp.json(), ver, url, chash))
         
-    print(f"\nExtracted {len(all_chunks)} chunks total.")
+    print(f"\nExtracted {len(all_chunks)} new chunks total.")
     
-    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "factorio_lancedb")
-    os.makedirs(db_path, exist_ok=True)
-    db = lancedb.connect(db_path)
-    
-    if "docs" in db.list_tables():
-        db.drop_table("docs")
-        
-    print("Creating table and generating embeddings (this may take a while)...")
-    table = db.create_table("docs", schema=FactorioDoc)
+    if len(all_chunks) == 0:
+        print("Nothing new to ingest.")
+        return
     
     batch_size = 100
     for i in range(0, len(all_chunks), batch_size):

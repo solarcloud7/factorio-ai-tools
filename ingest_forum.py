@@ -1,6 +1,7 @@
 import os
 import time
 import requests
+import hashlib
 from bs4 import BeautifulSoup
 import lancedb
 import pyarrow as pa
@@ -27,14 +28,23 @@ schema = pa.schema([
     pa.field("class_name", pa.string()),
     pa.field("content", pa.string()),
     pa.field("version", pa.string()),
+    pa.field("content_hash", pa.string()),
     pa.field("vector", pa.list_(pa.float32(), 768))
 ])
 
 if "forum" in db.table_names():
-    print("Dropping existing forum table...")
-    db.drop_table("forum")
+    table = db.open_table("forum")
+    if "content_hash" not in table.schema.names:
+        print("Dropping existing forum table to migrate to new schema...")
+        db.drop_table("forum")
+        table = db.create_table("forum", schema=schema)
+else:
+    table = db.create_table("forum", schema=schema)
 
-table = db.create_table("forum", schema=schema, mode="overwrite")
+table = db.open_table("forum")
+
+def get_hash(text):
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 def chunk_text(text, max_words=300):
     words = text.split()
@@ -81,6 +91,15 @@ for url in topic_urls:
         if not content:
             continue
             
+        current_hash = get_hash(content)
+        
+        existing = table.search().where(f"file_path = '{url}'").limit(1).to_list()
+        if existing and existing[0].get('content_hash') == current_hash:
+            print(f"Skipping {url}, content unchanged.".encode('ascii', 'replace').decode('ascii'))
+            continue
+            
+        table.delete(f"file_path = '{url}'")
+            
         chunks = chunk_text(content)
         
         for i, chunk in enumerate(chunks):
@@ -94,6 +113,7 @@ for url in topic_urls:
                 "class_name": title,
                 "content": chunk_content,
                 "version": "latest",
+                "content_hash": current_hash,
                 "vector": embedding
             })
             

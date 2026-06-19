@@ -28,7 +28,7 @@ class CodeChunk(LanceModel):
     node_type: str
     node_name: str
     content: str
-    hash: str
+    content_hash: str
     vector: Vector(768)
 
 def get_preceding_comments(node):
@@ -45,10 +45,7 @@ def get_node_name(node):
         return name_node.text.decode('utf8')
     return "anonymous"
 
-def extract_chunks(file_path):
-    with open(file_path, 'rb') as f:
-        src = f.read()
-    
+def extract_chunks(file_path, src, content_hash):
     tree = parser.parse(src)
     cursor = QueryCursor(ts_query)
     captures = cursor.captures(tree.root_node)
@@ -73,18 +70,12 @@ def extract_chunks(file_path):
                 "node_type": capture_name,
                 "node_name": name,
                 "content": full_content,
-                "hash": content_hash
+                "content_hash": content_hash
             })
         
     return chunks
 
-def extract_text_chunks(file_path):
-    try:
-        with open(file_path, 'r', encoding='utf8') as f:
-            content = f.read()
-    except UnicodeDecodeError:
-        return []
-    
+def extract_text_chunks(file_path, content, content_hash):
     chunk_size = 1500
     overlap = 200
     chunks = []
@@ -97,14 +88,13 @@ def extract_text_chunks(file_path):
     i = 0
     while i < len(content):
         chunk_content = content[i:i+chunk_size]
-        content_hash = hashlib.md5(chunk_content.encode('utf8')).hexdigest()
         
         chunks.append({
             "file_path": file_path,
             "node_type": "text_file",
             "node_name": file_name,
             "content": chunk_content,
-            "hash": content_hash
+            "content_hash": content_hash
         })
         i += (chunk_size - overlap)
         
@@ -123,35 +113,57 @@ def main():
         
     print(f"Found {len(all_files)} total files.")
     
-    print("Extracting chunks...")
-    all_chunks = []
-    for f in all_files:
-        if f.endswith('.ts') or f.endswith('.js'):
-            all_chunks.extend(extract_chunks(f))
-        else:
-            all_chunks.extend(extract_text_chunks(f))
-            
-    print(f"Extracted {len(all_chunks)} total chunks.")
-    
     print("Connecting to LanceDB...")
     db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clusterio_lancedb")
     db = lancedb.connect(db_path)
     
-    if "codebase" not in db.list_tables():
-        table = db.create_table("codebase", schema=CodeChunk)
-        existing_hashes = set()
-    else:
+    if "codebase" in db.table_names():
         table = db.open_table("codebase")
-        # Load existing hashes to skip re-embedding
-        # In a real sync, we'd also delete rows for files/hashes that no longer exist
-        existing_hashes = set([r['hash'] for r in table.search().limit(100000).to_list()])
+        if "content_hash" not in table.schema.names:
+            print("Dropping existing codebase table to migrate to new schema...")
+            del table
+            db.drop_table("codebase")
+            table = db.create_table("codebase", schema=CodeChunk)
+    else:
+        table = db.create_table("codebase", schema=CodeChunk)
         
-    new_chunks = [c for c in all_chunks if c['hash'] not in existing_hashes]
-    print(f"Found {len(new_chunks)} new or modified chunks that need embedding.")
+    table = db.open_table("codebase")
     
-    if len(new_chunks) == 0:
+    print("Extracting chunks...")
+    all_chunks = []
+    skipped_count = 0
+    for f in all_files:
+        try:
+            with open(f, 'rb') as file:
+                content_bytes = file.read()
+            f_hash = hashlib.sha256(content_bytes).hexdigest()
+        except:
+            continue
+            
+        if len(table) > 0:
+            existing = table.search().where(f"file_path = '{f}'").limit(1).to_list()
+            if existing and existing[0].get('content_hash') == f_hash:
+                skipped_count += 1
+                continue
+            table.delete(f"file_path = '{f}'")
+            
+        if f.endswith('.ts') or f.endswith('.js'):
+            all_chunks.extend(extract_chunks(f, content_bytes, f_hash))
+        else:
+            try:
+                text_content = content_bytes.decode('utf8')
+                all_chunks.extend(extract_text_chunks(f, text_content, f_hash))
+            except:
+                pass
+                
+    print(f"Skipped {skipped_count} unchanged files.")
+    print(f"Extracted {len(all_chunks)} new/modified chunks.")
+    
+    if len(all_chunks) == 0:
         print("Database is perfectly up to date!")
         return
+        
+    new_chunks = all_chunks
 
     print("Loading SentenceTransformer model...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
