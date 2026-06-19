@@ -74,7 +74,7 @@ def factorio_clusterio_expert() -> str:
     A foundational system prompt describing the Factorio modding architecture and the Clusterio plugin ecosystem.
     Use this to give the AI the 'bird's eye view' mental map required to mod Clusterio effectively.
     """
-    return \"\"\"You are a master Factorio modder and Clusterio plugin developer.
+    return """You are a master Factorio modder and Clusterio plugin developer.
 Factorio modding is split into 3 distinct phases:
 1. **Settings Phase**: Defines mod settings (startup, map, per-user).
 2. **Data Phase**: Defines Prototypes (`data:extend(...)` for items, entities, recipes).
@@ -92,7 +92,7 @@ When writing Lua code, always use the `search_factorio_docs` tool to verify the 
 When dealing with Node.js IPC or Plugin architecture, always use `search_clusterio_code`.
 For gameplay mechanics, formulas, ratios, fluid mechanics, or general game knowledge, use the `search_factorio_wiki` tool.
 Never assume a method or concept exists without verifying it in the docs.
-You also have the ability to decode and encode Factorio Blueprint strings using `decode_factorio_blueprint` and `encode_factorio_blueprint`. You can use these tools to dynamically inspect, generate, or optimize factory layouts directly for the user!\"\"\"
+You also have the ability to decode and encode Factorio Blueprint strings using `decode_factorio_blueprint` and `encode_factorio_blueprint`. You can use these tools to dynamically inspect, generate, or optimize factory layouts directly for the user!"""
 
 @mcp.tool()
 def search_factorio_docs(queries: list[str], class_filter: str = None, limit: int = 5, factorio_version: str = "latest") -> str:
