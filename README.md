@@ -12,27 +12,52 @@ This single server exposes two powerful semantic search tools:
 - **Deadlock-Safe Embeddings**: Replaces LanceDB's native PyTorch embedding registry with an explicit, synchronous Main Thread embedding pipeline. This protects Windows users from the notorious CUDA multiprocessor deadlock bug (`#3559`).
 - **MD5 Hash Sync**: Updates to the local databases are near-instant because nodes are hashed prior to embedding; only new or changed nodes hit the GPU.
 
-## Quick Install (Smithery)
+## Installation
 
-The fastest way to install this for Claude Desktop is via Smithery:
+There are two ways to install this MCP server into Claude Desktop: using the automated Smithery CLI, or manually installing the Python environment.
+
+### Option 1: Quick Install via Smithery (Recommended)
+
+You can automatically install this server and its dependencies directly into Claude Desktop using the Smithery CLI:
 
 ```bash
-npx -y @smithery/cli install factorio-ai-tools --client claude
+npx -y @smithery/cli install solarcloud7/factorio-ai-tools --client claude
 ```
+*Note: This will automatically clone the repository, install Python requirements, and update your `claude_desktop_config.json` file.*
 
-## Manual Setup
+### Option 2: Manual Setup
 
-1. Clone this repository.
-2. Install Python dependencies:
+If you prefer to set it up manually without `npx`, follow these steps:
+
+1. Clone this repository:
    ```bash
+   git clone https://github.com/solarcloud7/factorio-ai-tools.git
+   cd factorio-ai-tools
+   ```
+2. Create a virtual environment and install the Python dependencies:
+   ```bash
+   python -m venv venv
+   # On Windows:
+   .\venv\Scripts\activate
+   # On Mac/Linux:
+   source venv/bin/activate
+   
    pip install -r requirements.txt
    ```
-3. Run the ingest scripts to populate the local vector databases (Optional if you cloned the pre-built `factorio_lancedb` and `clusterio_lancedb` folders):
+3. *(Optional)* Run the ingest scripts to populate the local vector databases if you didn't download the pre-built `factorio_lancedb` and `clusterio_lancedb` folders:
    ```bash
    python ingest_factorio.py
    python ingest_clusterio.py
    ```
-4. Start the MCP server:
-   ```bash
-   python server.py
+4. Add the server to your Claude Desktop config (usually at `%APPDATA%\Claude\claude_desktop_config.json` on Windows or `~/Library/Application Support/Claude/claude_desktop_config.json` on Mac):
+   ```json
+   "mcpServers": {
+     "factorio-ai-tools": {
+       "command": "C:\\path\\to\\factorio-ai-tools\\venv\\Scripts\\python.exe",
+       "args": [
+         "C:\\path\\to\\factorio-ai-tools\\server.py"
+       ]
+     }
+   }
    ```
+5. Restart Claude Desktop.
