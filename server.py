@@ -360,6 +360,147 @@ def encode_factorio_blueprint(json_string: str) -> str:
     except Exception as e:
         return f"Error encoding blueprint: {str(e)}"
 
+import urllib.request
+import platform
+
+db_path_mod = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mod_lancedb")
+try:
+    db_mod = lancedb.connect(db_path_mod)
+    table_mod = db_mod.open_table("codebase")
+except Exception as e:
+    print(f"Warning: Could not open Mod codebase table. Error: {e}")
+    table_mod = None
+
+@mcp.tool()
+def search_mod_code(queries: list[str], mod_name: str = None, limit: int = 5) -> str:
+    """
+    Search the custom GitHub mod codebase using semantic AST-chunked RAG.
+    
+    Args:
+        queries: A list of semantic search queries to batch process.
+        mod_name: Optional mod name filter (e.g. 'maraxsis') which corresponds to the GitHub repo name.
+        limit: Maximum number of chunks to return per query (default 5, max 20).
+    """
+    if table_mod is None:
+        return "Error: Mod database table not found. Please run ingest_github_mod.py first."
+        
+    if not queries:
+        return "No queries provided."
+        
+    try:
+        limit = min(max(1, limit), 20)
+        
+        # Generate vectors
+        query_vecs = model.encode(queries, normalize_embeddings=True)
+        
+        all_formatted_chunks = []
+        
+        for idx, query_vec in enumerate(query_vecs):
+            q = table_mod.search(query_vec.tolist())
+            
+            if mod_name:
+                safe_mod = mod_name.replace("'", "''")
+                q = q.where(f"repo_url LIKE '%{safe_mod}%'")
+                
+            results = q.limit(limit).to_list()
+            
+            all_formatted_chunks.append(f"### Results for query: '{queries[idx]}'")
+            
+            if len(results) == 0:
+                all_formatted_chunks.append("No results found.")
+            else:
+                for i, row in enumerate(results):
+                    chunk = (
+                        f"**Result {i+1}** - {row['node_name']} ({row['node_type']}) in Mod: {row['repo_url']}\n"
+                        f"**File:** `{row['file_path']}`\n\n"
+                        f"```lua\n"
+                        f"{row['content']}\n"
+                        f"```"
+                    )
+                    all_formatted_chunks.append(chunk)
+            
+            all_formatted_chunks.append("---")
+            
+        return "\\n\\n".join(all_formatted_chunks)
+        
+    except Exception as e:
+        return f"Error executing mod code search: {str(e)}"
+
+@mcp.tool()
+def factorio_mod_portal_analyzer(mod_name: str) -> str:
+    """
+    Query the Factorio Mod Portal API for a specific mod to fetch metadata, dependencies, releases, and description.
+    
+    Args:
+        mod_name: The exact internal name of the mod (e.g. 'maraxsis', 'space-exploration').
+    """
+    url = f"https://mods.factorio.com/api/mods/{mod_name}/full"
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'FactorioAITools/1.0'})
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            
+        # Format the output to be readable by the LLM without dumping massive amounts of JSON
+        res = [f"# Mod: {data.get('title', mod_name)} ({data.get('name')})"]
+        res.append(f"**Downloads**: {data.get('downloads_count')}")
+        res.append(f"**Category**: {data.get('category')} | **Created At**: {data.get('created_at')}")
+        res.append(f"**Summary**: {data.get('summary')}")
+        
+        releases = data.get('releases', [])
+        if releases:
+            latest = releases[-1]
+            res.append(f"\\n## Latest Release ({latest.get('version')}) for Factorio {latest.get('info_json', {}).get('factorio_version')}")
+            deps = latest.get('info_json', {}).get('dependencies', [])
+            res.append("**Dependencies**:")
+            if deps:
+                for d in deps:
+                    res.append(f"- {d}")
+            else:
+                res.append("None")
+                
+        res.append(f"\\n## Description\\n{data.get('description', '')[:2000]}... (truncated)")
+        return "\\n".join(res)
+        
+    except urllib.error.HTTPError as e:
+        return f"HTTP Error fetching mod portal data: {e.code} {e.reason}"
+    except Exception as e:
+        return f"Error fetching mod portal data: {str(e)}"
+
+@mcp.tool()
+def factorio_log_inspector(custom_path: str = None, tail_lines: int = 150) -> str:
+    """
+    Inspect the factorio-current.log file to diagnose initialization errors and runtime crashes.
+    By default, it will look in the standard OS locations for the Factorio application data.
+    
+    Args:
+        custom_path: An optional explicit path to a factorio-current.log file (useful for Clusterio node logs).
+        tail_lines: How many of the most recent lines to return (default 150, max 500).
+    """
+    try:
+        log_path = custom_path
+        if not log_path:
+            system = platform.system()
+            if system == "Windows":
+                log_path = os.path.expandvars(r"%APPDATA%\\Factorio\\factorio-current.log")
+            elif system == "Darwin":
+                log_path = os.path.expanduser("~/Library/Application Support/factorio/factorio-current.log")
+            else:
+                log_path = os.path.expanduser("~/.factorio/factorio-current.log")
+                
+        if not os.path.exists(log_path):
+            return f"Log file not found at: {log_path}\\nAre you sure Factorio has been run on this machine, or did you need to provide a custom_path?"
+            
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+            
+        tail_lines = min(max(10, tail_lines), 500)
+        recent_lines = lines[-tail_lines:]
+        
+        return f"### Showing last {len(recent_lines)} lines of {log_path}:\\n\\n" + "".join(recent_lines)
+        
+    except Exception as e:
+        return f"Error reading log file: {str(e)}"
+
 if __name__ == '__main__':
     # Run the server using stdio
     mcp.run()
