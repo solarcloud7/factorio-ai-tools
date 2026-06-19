@@ -1,0 +1,18 @@
+startCommand:
+  type: stdio
+  config:
+    command: python
+    args:
+      - server.py
+buildSteps:
+  - command: pip
+    args:
+      - install
+      - -r
+      - requirements.txt
+  - command: python
+    args:
+      - ingest_factorio.py
+  - command: python
+    args:
+      - ingest_clusterio.py
