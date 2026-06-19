@@ -57,24 +57,24 @@ def extract_chunks(file_path):
     for capture_name, nodes in captures.items():
         for node in nodes:
             name = get_node_name(node)
-        
-        # Grab comments + raw code
-        comments = get_preceding_comments(node)
-        raw_code = node.text.decode('utf8')
-        
-        full_content = raw_code
-        if comments:
-            full_content = f"{comments}\n{raw_code}"
             
-        content_hash = hashlib.md5(full_content.encode('utf8')).hexdigest()
-        
-        chunks.append({
-            "file_path": file_path,
-            "node_type": capture_name,
-            "node_name": name,
-            "content": full_content,
-            "hash": content_hash
-        })
+            # Grab comments + raw code
+            comments = get_preceding_comments(node)
+            raw_code = node.text.decode('utf8')
+            
+            full_content = raw_code
+            if comments:
+                full_content = f"{comments}\n{raw_code}"
+                
+            content_hash = hashlib.md5(full_content.encode('utf8')).hexdigest()
+            
+            chunks.append({
+                "file_path": file_path,
+                "node_type": capture_name,
+                "node_name": name,
+                "content": full_content,
+                "hash": content_hash
+            })
         
     return chunks
 
@@ -95,7 +95,7 @@ def main():
     db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clusterio_lancedb")
     db = lancedb.connect(db_path)
     
-    if "codebase" not in db.table_names():
+    if "codebase" not in db.list_tables():
         table = db.create_table("codebase", schema=CodeChunk)
         existing_hashes = set()
     else:

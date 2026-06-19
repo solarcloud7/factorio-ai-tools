@@ -142,7 +142,7 @@ def main():
     db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "factorio_lancedb")
     db = lancedb.connect(db_path)
     
-    if "docs" in db.table_names():
+    if "docs" in db.list_tables():
         db.drop_table("docs")
         
     print("Creating table and generating embeddings (this may take a while)...")
