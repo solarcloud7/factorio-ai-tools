@@ -50,6 +50,17 @@ If you have Docker Desktop installed, you can simply pull the pre-packaged conta
 }
 ```
 
+### Method 3: Global SSE Server (Save RAM/VRAM)
+By default, standard `stdio` MCP execution spawns a completely separate Python process for *every single client connection*. Because this server uses PyTorch and `sentence-transformers`, every connection will load the embedding model again, consuming roughly ~500MB of RAM/VRAM per instance. 
+
+If you want to use the MCP server across multiple IDEs or workspaces simultaneously without duplicating memory, you can run a single global HTTP SSE server in the background:
+
+```powershell
+uv run factorio-ai-tools --sse --port 8000
+```
+
+Then, configure your IDE or Claude client to connect to the SSE endpoint (e.g., `http://localhost:8000/sse`) instead of executing the CLI via `stdio`.
+
 ### Selective Tool Loading (Optional)
 By default, the server loads all available tools. If you only want to expose specific tools to your LLM, you can use the `--enable-tools` or `--disable-tools` arguments.
 For example, to *only* load the doc search and the blueprint decoder using `uvx`:

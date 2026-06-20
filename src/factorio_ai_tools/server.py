@@ -16,6 +16,8 @@ import argparse
 parser = argparse.ArgumentParser(description="Factorio AI Tools MCP Server")
 parser.add_argument("--enable-tools", type=str, help="Comma-separated list of tools to enable")
 parser.add_argument("--disable-tools", type=str, help="Comma-separated list of tools to disable")
+parser.add_argument("--sse", action="store_true", help="Run as an SSE server (global shared instance)")
+parser.add_argument("--port", type=int, default=8000, help="Port to run the SSE server on (default: 8000)")
 args, _ = parser.parse_known_args()
 
 enabled_tools = [t.strip() for t in args.enable_tools.split(",")] if args.enable_tools else None
@@ -29,7 +31,7 @@ def tool_enabled(tool_name: str) -> bool:
     return True
 
 # Initialize FastMCP server
-mcp = FastMCP("Factorio AI Tools")
+mcp = FastMCP("Factorio AI Tools", port=args.port)
 
 def optional_tool():
     def decorator(func):
@@ -531,8 +533,12 @@ def factorio_mod_portal_analyzer(mod_name: str) -> str:
 
 
 def main():
-    # Run the server using stdio
-    mcp.run()
+    if args.sse:
+        print(f"Starting Factorio AI Tools MCP Server on SSE (port {args.port})...")
+        mcp.run(transport='sse')
+    else:
+        # Run the server using stdio
+        mcp.run()
 
 if __name__ == '__main__':
     main()
