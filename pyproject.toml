@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "factorio-ai-tools"
-version = "0.1.0"
+dynamic = ["version"]
 authors = [
   { name="Solar" }
 ]
@@ -22,7 +22,9 @@ dependencies = [
 ]
 
 [project.scripts]
-factorio-ai-tools = "server:main"
+factorio-ai-tools = "factorio_ai_tools.server:main"
 
-[tool.setuptools]
-py-modules = ["server", "ingest_clusterio", "ingest_factorio", "ingest_forum", "ingest_github_mod", "ingest_wiki"]
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools_scm]

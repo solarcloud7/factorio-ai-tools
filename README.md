@@ -50,10 +50,10 @@ If you have Docker Desktop installed, you can simply pull the pre-packaged conta
 If you wish to run the python scripts manually or ingest custom codebases:
 1. Create a python virtual environment: `python -m venv venv` and activate it.
 2. Run `pip install -r requirements.txt`.
-3. *(Optional)* Run the ingestion scripts (`python ingest_factorio.py`, etc.) to rebuild the LanceDB tables.
+3. *(Optional)* Run the ingestion scripts (`python -m factorio_ai_tools.ingest.ingest_factorio`, etc.) to rebuild the LanceDB tables.
 4. *(Optional)* Ingest a specific GitHub Mod:
    ```powershell
-   python ingest_github_mod.py --repo-url https://github.com/notnotmelon/maraxsis
+   python -m factorio_ai_tools.ingest.ingest_github_mod --repo-url https://github.com/notnotmelon/maraxsis
    ```
 
 ## Maintenance (Database Hygiene)
@@ -87,5 +87,5 @@ git config core.hooksPath maintenance/hooks
 - `decode_factorio_blueprint`: Convert Factorio blueprint strings (e.g. `0eNq...`) into easily readable/editable JSON.
 - `encode_factorio_blueprint`: Compress generated JSON back into an importable Factorio blueprint string.
 - `factorio_mod_portal_analyzer`: Scrape and summarize the Factorio Mod Portal for any given mod to retrieve dependencies and release versions.
-- `factorio_log_inspector`: Autonomously sweep your OS for `factorio-current.log` and extract crash stack traces.
+- `factorio_log_inspector`: Reads the standard Factorio log file from your local AppData folder to extract crash stack traces and diagnose initialization errors.
 - `get_mcp_version_info`: Self-diagnostics tool to verify the currently loaded database versions.

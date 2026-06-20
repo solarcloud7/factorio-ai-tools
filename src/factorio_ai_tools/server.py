@@ -19,7 +19,8 @@ import zipfile
 import shutil
 
 # Determine if we are running locally (git/docker) or via PyPI/uvx
-LOCAL_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+LOCAL_DATA_DIR = os.path.join(REPO_ROOT, "data")
 USER_DATA_DIR = os.path.expanduser("~/.factorio-ai-tools/data")
 
 if os.path.exists(LOCAL_DATA_DIR) or os.getenv("FACTORIO_MCP_LOCAL_MODE"):

@@ -12,7 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all python scripts and LanceDB vector databases
 COPY . .
 
-# Ensure the mcp server binds to stdio properly
+# Ensure the mcp server binds to stdio properly and PYTHONPATH is set for the src layout
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app/src
 
-ENTRYPOINT ["python", "server.py"]
+ENTRYPOINT ["python", "-m", "factorio_ai_tools.server"]
