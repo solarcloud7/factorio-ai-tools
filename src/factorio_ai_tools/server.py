@@ -505,40 +505,6 @@ def factorio_mod_portal_analyzer(mod_name: str) -> str:
     except Exception as e:
         return f"Error fetching mod portal data: {str(e)}"
 
-@mcp.tool()
-def factorio_log_inspector(custom_path: str = None, tail_lines: int = 150) -> str:
-    """
-    Inspect the factorio-current.log file to diagnose initialization errors and runtime crashes.
-    By default, it will look in the standard OS locations for the Factorio application data.
-    
-    Args:
-        custom_path: An optional explicit path to a factorio-current.log file (useful for Clusterio node logs).
-        tail_lines: How many of the most recent lines to return (default 150, max 500).
-    """
-    try:
-        log_path = custom_path
-        if not log_path:
-            system = platform.system()
-            if system == "Windows":
-                log_path = os.path.expandvars(r"%APPDATA%\\Factorio\\factorio-current.log")
-            elif system == "Darwin":
-                log_path = os.path.expanduser("~/Library/Application Support/factorio/factorio-current.log")
-            else:
-                log_path = os.path.expanduser("~/.factorio/factorio-current.log")
-                
-        if not os.path.exists(log_path):
-            return f"Log file not found at: {log_path}\nAre you sure Factorio has been run on this machine, or did you need to provide a custom_path?"
-            
-        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-            
-        tail_lines = min(max(10, tail_lines), 500)
-        recent_lines = lines[-tail_lines:]
-        
-        return f"### Showing last {len(recent_lines)} lines of {log_path}:\n\n" + "".join(recent_lines)
-        
-    except Exception as e:
-        return f"Error reading log file: {str(e)}"
 
 def main():
     # Run the server using stdio

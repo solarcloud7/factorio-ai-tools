@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="docs/assets/factorio-ai-tools.png" alt="Factorio AI Tools Icon" width="200"/>
+</div>
+
 # Factorio AI Tools (MCP Server)
 
 A lightning-fast, hybrid-search Vector Database and Model Context Protocol (MCP) server designed to give LLMs absolute expertise over Factorio modding and Clusterio plugin development.
@@ -87,5 +91,5 @@ git config core.hooksPath maintenance/hooks
 - `decode_factorio_blueprint`: Convert Factorio blueprint strings (e.g. `0eNq...`) into easily readable/editable JSON.
 - `encode_factorio_blueprint`: Compress generated JSON back into an importable Factorio blueprint string.
 - `factorio_mod_portal_analyzer`: Scrape and summarize the Factorio Mod Portal for any given mod to retrieve dependencies and release versions.
-- `factorio_log_inspector`: Reads the standard Factorio log file from your local AppData folder to extract crash stack traces and diagnose initialization errors.
+
 - `get_mcp_version_info`: Self-diagnostics tool to verify the currently loaded database versions.
