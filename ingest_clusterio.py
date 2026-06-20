@@ -63,7 +63,6 @@ def extract_chunks(file_path, src, content_hash):
             if comments:
                 full_content = f"{comments}\n{raw_code}"
                 
-            content_hash = hashlib.md5(full_content.encode('utf8')).hexdigest()
             
             chunks.append({
                 "file_path": file_path,
@@ -140,12 +139,13 @@ def main():
         except:
             continue
             
+        safe_f = f.replace("'", "''")
         if len(table) > 0:
-            existing = table.search().where(f"file_path = '{f}'").limit(1).to_list()
+            existing = table.search().where(f"file_path = '{safe_f}'").limit(1).to_list()
             if existing and existing[0].get('content_hash') == f_hash:
                 skipped_count += 1
                 continue
-            table.delete(f"file_path = '{f}'")
+            table.delete(f"file_path = '{safe_f}'")
             
         if f.endswith('.ts') or f.endswith('.js'):
             all_chunks.extend(extract_chunks(f, content_bytes, f_hash))

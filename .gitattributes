@@ -1,0 +1,28 @@
+# Make line endings deterministic across machines, editors, and CI, so the
+# repository stops drifting between CRLF and LF (and Git stops warning that
+# "LF will be replaced by CRLF"). This file is authoritative and overrides
+# each developer's personal `core.autocrlf` setting for this project.
+
+# Default: let Git auto-detect text vs binary. Text is stored as LF in the repo.
+* text=auto
+
+# Source and config: enforce LF in the working tree too (not just in the repo),
+# so the checked-out files always match what is committed. The repo is already
+# all-LF, so this introduces no content churn.
+*.py            text eol=lf
+*.md            text eol=lf
+*.txt           text eol=lf
+*.yaml          text eol=lf
+*.yml           text eol=lf
+*.cfg           text eol=lf
+*.toml          text eol=lf
+*.json          text eol=lf
+*.sh            text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+
+# Pre-built LanceDB vector stores are binary data — never apply line-ending
+# (or any) conversion. These rules come last so they win over the patterns
+# above for any text-looking files (hint .json, version.txt) inside the stores.
+*_lancedb/**    binary
+*.lance         binary

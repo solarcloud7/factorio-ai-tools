@@ -106,7 +106,7 @@ for url in topic_urls:
         for i, chunk in enumerate(chunks):
             # Prepend title to context
             chunk_content = f"Topic: {title}\n\n{chunk}"
-            embedding = model.encode(chunk_content).tolist()
+            embedding = model.encode(chunk_content, normalize_embeddings=True).tolist()
             
             records.append({
                 "id": f"forum_{topic_count}_{i}",

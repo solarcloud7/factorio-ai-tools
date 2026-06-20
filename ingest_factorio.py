@@ -258,7 +258,7 @@ def main():
         table.add(batch)
         
     print("Creating FTS index for hybrid search...")
-    table.create_fts_index("text")
+    table.create_fts_index("text", replace=True)
     
     # Save version info
     with open(os.path.join(db_path, "version.txt"), "w") as f:

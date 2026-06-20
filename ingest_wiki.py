@@ -110,17 +110,18 @@ def main():
                 wikitext = data["parse"]["wikitext"]["*"]
                 chash = get_hash(wikitext)
                 
+                safe_db_title = title.replace("'", "''")
                 if len(table) > 0:
-                    existing = table.search().where(f"title = '{title}'").limit(1).to_list()
+                    existing = table.search().where(f"title = '{safe_db_title}'").limit(1).to_list()
                     if existing and existing[0].get('content_hash') == chash:
                         print(f"Skipping {safe_title}, unchanged.")
                         continue
-                    table.delete(f"title = '{title}'")
+                    table.delete(f"title = '{safe_db_title}'")
                     
                 chunks = chunk_text(wikitext, title, chash)
                 all_chunks.extend(chunks)
         except Exception as e:
-            print(f"Failed to fetch {title}: {e}")
+            print(f"Failed to fetch {safe_title}: {e}".encode('ascii', 'replace').decode('ascii'))
             
         time.sleep(0.1) # Be nice to the wiki server
         
@@ -144,7 +145,7 @@ def main():
         table.add(batch)
         
     print("Creating FTS index for hybrid search...")
-    table.create_fts_index("text")
+    table.create_fts_index("text", replace=True)
     
     print("Ingestion complete!")
 

@@ -1,4 +1,5 @@
 import os
+import sys
 import lancedb
 import base64
 import zlib
@@ -27,25 +28,25 @@ db_forum = lancedb.connect(db_path_forum)
 try:
     table_factorio = db_factorio.open_table("docs")
 except Exception as e:
-    print(f"Warning: Could not open Factorio docs table. Did you run ingest_factorio.py? Error: {e}")
+    print(f"Warning: Could not open Factorio docs table. Did you run ingest_factorio.py? Error: {e}", file=sys.stderr)
     table_factorio = None
 
 try:
     table_clusterio = db_clusterio.open_table("codebase")
 except Exception as e:
-    print(f"Warning: Could not open Clusterio codebase table. Did you run ingest_clusterio.py? Error: {e}")
+    print(f"Warning: Could not open Clusterio codebase table. Did you run ingest_clusterio.py? Error: {e}", file=sys.stderr)
     table_clusterio = None
 
 try:
     table_wiki = db_wiki.open_table("docs")
 except Exception as e:
-    print(f"Warning: Could not open Factorio wiki table. Did you run ingest_wiki.py? Error: {e}")
+    print(f"Warning: Could not open Factorio wiki table. Did you run ingest_wiki.py? Error: {e}", file=sys.stderr)
     table_wiki = None
 
 try:
     table_forum = db_forum.open_table("forum")
 except Exception as e:
-    print(f"Warning: Could not open Factorio forum table. Did you run ingest_forum.py? Error: {e}")
+    print(f"Warning: Could not open Factorio forum table. Did you run ingest_forum.py? Error: {e}", file=sys.stderr)
     table_forum = None
 
 # Initialize embedding model globally
@@ -326,7 +327,10 @@ def decode_factorio_blueprint(blueprint_string: str) -> str:
         
         # Decompress zlib (with 10MB protection)
         d = zlib.decompressobj()
-        json_data = d.decompress(compressed_data, 10 * 1024 * 1024).decode('utf-8')
+        raw = d.decompress(compressed_data, 10 * 1024 * 1024)
+        if d.unconsumed_tail:
+            return "Error: Blueprint too large (decompressed size exceeds the 10MB safety limit)."
+        json_data = raw.decode('utf-8')
         
         # Parse and re-format JSON nicely
         parsed = json.loads(json_data)
@@ -369,7 +373,7 @@ try:
     db_mod = lancedb.connect(db_path_mod)
     table_mod = db_mod.open_table("codebase")
 except Exception as e:
-    print(f"Warning: Could not open Mod codebase table. Error: {e}")
+    print(f"Warning: Could not open Mod codebase table. Error: {e}", file=sys.stderr)
     table_mod = None
 
 @mcp.tool()
@@ -422,7 +426,7 @@ def search_mod_code(queries: list[str], mod_name: str = None, limit: int = 5) ->
             
             all_formatted_chunks.append("---")
             
-        return "\\n\\n".join(all_formatted_chunks)
+        return "\n\n".join(all_formatted_chunks)
         
     except Exception as e:
         return f"Error executing mod code search: {str(e)}"
@@ -438,7 +442,7 @@ def factorio_mod_portal_analyzer(mod_name: str) -> str:
     url = f"https://mods.factorio.com/api/mods/{mod_name}/full"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'FactorioAITools/1.0'})
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read().decode('utf-8'))
             
         # Format the output to be readable by the LLM without dumping massive amounts of JSON
@@ -450,7 +454,7 @@ def factorio_mod_portal_analyzer(mod_name: str) -> str:
         releases = data.get('releases', [])
         if releases:
             latest = releases[-1]
-            res.append(f"\\n## Latest Release ({latest.get('version')}) for Factorio {latest.get('info_json', {}).get('factorio_version')}")
+            res.append(f"\n## Latest Release ({latest.get('version')}) for Factorio {latest.get('info_json', {}).get('factorio_version')}")
             deps = latest.get('info_json', {}).get('dependencies', [])
             res.append("**Dependencies**:")
             if deps:
@@ -459,8 +463,8 @@ def factorio_mod_portal_analyzer(mod_name: str) -> str:
             else:
                 res.append("None")
                 
-        res.append(f"\\n## Description\\n{data.get('description', '')[:2000]}... (truncated)")
-        return "\\n".join(res)
+        res.append(f"\n## Description\n{(data.get('description') or '')[:2000]}" + ("... (truncated)" if len(data.get('description') or '') > 2000 else ""))
+        return "\n".join(res)
         
     except urllib.error.HTTPError as e:
         return f"HTTP Error fetching mod portal data: {e.code} {e.reason}"
@@ -489,7 +493,7 @@ def factorio_log_inspector(custom_path: str = None, tail_lines: int = 150) -> st
                 log_path = os.path.expanduser("~/.factorio/factorio-current.log")
                 
         if not os.path.exists(log_path):
-            return f"Log file not found at: {log_path}\\nAre you sure Factorio has been run on this machine, or did you need to provide a custom_path?"
+            return f"Log file not found at: {log_path}\nAre you sure Factorio has been run on this machine, or did you need to provide a custom_path?"
             
         with open(log_path, "r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
@@ -497,7 +501,7 @@ def factorio_log_inspector(custom_path: str = None, tail_lines: int = 150) -> st
         tail_lines = min(max(10, tail_lines), 500)
         recent_lines = lines[-tail_lines:]
         
-        return f"### Showing last {len(recent_lines)} lines of {log_path}:\\n\\n" + "".join(recent_lines)
+        return f"### Showing last {len(recent_lines)} lines of {log_path}:\n\n" + "".join(recent_lines)
         
     except Exception as e:
         return f"Error reading log file: {str(e)}"

@@ -165,12 +165,14 @@ def main():
             
         relative_path = os.path.relpath(f, temp_dir).replace('\\', '/')
         
+        safe_rel = relative_path.replace("'", "''")
+        safe_repo = repo_url.replace("'", "''")
         if len(table) > 0:
-            existing = table.search().where(f"file_path = '{relative_path}' AND repo_url = '{repo_url}'").limit(1).to_list()
+            existing = table.search().where(f"file_path = '{safe_rel}' AND repo_url = '{safe_repo}'").limit(1).to_list()
             if existing and existing[0].get('content_hash') == f_hash:
                 skipped_count += 1
                 continue
-            table.delete(f"file_path = '{relative_path}' AND repo_url = '{repo_url}'")
+            table.delete(f"file_path = '{safe_rel}' AND repo_url = '{safe_repo}'")
             
         if f.endswith('.lua'):
             all_chunks.extend(extract_lua_chunks(f, content_bytes, f_hash, relative_path))
@@ -190,7 +192,8 @@ def main():
         
     print("Loading SentenceTransformer model...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = SentenceTransformer("BAAI/bge-base-en-v1.5", device=device)
+    model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
+    model = SentenceTransformer(model_name, device=device)
     
     print("Generating embeddings synchronously on the main thread (Deadlock safe!)...")
     batch_size = 100
