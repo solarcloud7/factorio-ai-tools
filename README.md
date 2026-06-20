@@ -13,33 +13,46 @@ This project consists of 4 main components:
 
 ## Setup & Usage
 
-There are two primary ways to install and use this MCP server locally with Claude Desktop:
+There are three primary ways to install and use this MCP server locally with Claude Desktop (or any other MCP client):
 
-### Method 1: Standalone Windows Executable (Easiest)
-For standard Windows users, you don't need Python or any dependencies installed.
-1. Download the latest `factorio-ai-tools-windows.zip` from the [GitHub Releases](https://github.com/solarcloud7/factorio-ai-tools/releases) page.
-2. Extract the `.zip` file into a folder on your computer (e.g. `C:\FactorioMCP`).
-3. Add the following to your Claude Desktop config (`%APPDATA%\Claude\claude_desktop_config.json`):
+### Method 1: Using `uvx` (Recommended)
+If you have `uv` installed, this is the cleanest way to run the server. It will automatically download the package from PyPI and fetch the necessary vector databases on the first run.
+Add the following to your Claude Desktop config (`%APPDATA%\Claude\claude_desktop_config.json` or `~/Library/Application Support/Claude/claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
     "factorio-ai-tools": {
-      "command": "C:\\FactorioMCP\\factorio-ai-tools.exe",
-      "args": []
+      "command": "uvx",
+      "args": ["factorio-ai-tools"]
     }
   }
 }
 ```
 
-### Method 2: Docker (Best for Mac/Linux/Devs)
-If you have Docker Desktop installed, you can simply pull the pre-packaged container natively.
-1. Add the following to your Claude Desktop config (no download required!):
+### Method 2: Docker (Pre-packaged Datasets)
+If you have Docker Desktop installed, you can simply pull the pre-packaged container natively. The Docker container includes the databases inside the image, so no additional downloads are required at runtime.
 ```json
 {
   "mcpServers": {
     "factorio-ai-tools": {
       "command": "docker",
       "args": ["run", "-i", "--rm", "ghcr.io/solarcloud7/factorio-ai-tools:latest"]
+    }
+  }
+}
+```
+
+### Method 3: Standalone Windows Executable
+For standard Windows users without Python installed.
+1. Download the latest `factorio-ai-tools-windows.zip` from the [GitHub Releases](https://github.com/solarcloud7/factorio-ai-tools/releases) page.
+2. Extract the `.zip` file into a folder on your computer (e.g. `C:\FactorioMCP`).
+3. Add the following to your Claude Desktop config:
+```json
+{
+  "mcpServers": {
+    "factorio-ai-tools": {
+      "command": "C:\\FactorioMCP\\factorio-ai-tools.exe",
+      "args": []
     }
   }
 }
@@ -77,22 +90,7 @@ git config core.hooksPath maintenance/hooks
 # or copy maintenance/hooks/pre-push into .git/hooks/
 ```
 
-## Usage
 
-Hook this server into Claude Desktop (or any other MCP client) by adding the following to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "factorio-ai-tools": {
-      "command": "C:\\path\\to\\factorio-ai-tools\\venv\\Scripts\\python.exe",
-      "args": [
-        "C:\\path\\to\\factorio-ai-tools\\server.py"
-      ]
-    }
-  }
-}
-```
 
 ## Tools Included
 
