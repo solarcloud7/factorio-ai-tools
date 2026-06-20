@@ -167,7 +167,8 @@ def main():
 
     print("Loading SentenceTransformer model...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = SentenceTransformer("BAAI/bge-base-en-v1.5", device=device)
+    model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
+    model = SentenceTransformer(model_name, device=device)
     
     print("Generating embeddings synchronously on the main thread (Deadlock safe!)...")
     batch_size = 100

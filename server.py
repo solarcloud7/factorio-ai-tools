@@ -50,7 +50,8 @@ except Exception as e:
 
 # Initialize embedding model globally
 device = "cuda" if torch.cuda.is_available() else "cpu"
-model = SentenceTransformer("BAAI/bge-base-en-v1.5", device=device)
+model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
+model = SentenceTransformer(model_name, device=device)
 
 @mcp.tool()
 def get_mcp_version_info() -> str:

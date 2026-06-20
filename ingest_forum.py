@@ -15,8 +15,9 @@ BATCH_SIZE = 50
 
 # Setup device and model
 device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Loading embedding model on {device}...".encode('ascii', 'replace').decode('ascii'))
-model = SentenceTransformer("BAAI/bge-base-en-v1.5", device=device)
+model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
+print(f"Loading embedding model {model_name} on {device}...".encode('ascii', 'replace').decode('ascii'))
+model = SentenceTransformer(model_name, device=device)
 
 # Setup LanceDB
 print("Initializing LanceDB...".encode('ascii', 'replace').decode('ascii'))

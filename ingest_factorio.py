@@ -8,8 +8,9 @@ from sentence_transformers import SentenceTransformer
 from lancedb.pydantic import LanceModel, Vector
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Initializing SentenceTransformer on {device}...")
-model = SentenceTransformer("BAAI/bge-base-en-v1.5", device=device)
+model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
+print(f"Initializing SentenceTransformer {model_name} on {device}...")
+model = SentenceTransformer(model_name, device=device)
 
 class FactorioDoc(LanceModel):
     text: str
