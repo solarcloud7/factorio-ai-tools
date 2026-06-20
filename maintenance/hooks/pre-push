@@ -1,0 +1,42 @@
+#!/bin/sh
+#
+# Opt-in pre-push guard: refuse to push to main while the committed LanceDB
+# stores still carry uncompacted version history.
+#
+# Enable it with either:
+#   git config core.hooksPath maintenance/hooks
+# or copy this file to .git/hooks/pre-push and make it executable.
+#
+# git feeds "<local ref> <local sha> <remote ref> <remote sha>" lines on stdin,
+# one per ref being pushed. We only guard pushes whose remote ref is main.
+
+guard_main=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+	case "$remote_ref" in
+		refs/heads/main)
+			guard_main=1
+			;;
+	esac
+done
+
+if [ "$guard_main" -eq 0 ]; then
+	exit 0
+fi
+
+# Prefer the project venv's python if present, else fall back to python.
+if [ -x "venv/Scripts/python.exe" ]; then
+	PY="venv/Scripts/python.exe"
+elif [ -x "venv/bin/python" ]; then
+	PY="venv/bin/python"
+else
+	PY="python"
+fi
+
+if ! "$PY" maintenance/compact_lancedb.py --check; then
+	echo ""
+	echo "pre-push blocked: LanceDB stores are uncompacted." >&2
+	echo "Run: python maintenance/compact_lancedb.py  then commit and re-push." >&2
+	exit 1
+fi
+
+exit 0

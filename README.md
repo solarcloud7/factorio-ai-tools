@@ -26,15 +26,35 @@ This project consists of 4 main components:
 
 3. Build the databases. Run each script at least once to populate the LanceDB indexes:
    ```powershell
-   python ingest_factorio.py
-   python ingest_clusterio.py
-   python ingest_wiki.py
+   python ingest/ingest_factorio.py
+   python ingest/ingest_clusterio.py
+   python ingest/ingest_wiki.py
    ```
 
 4. **(Optional) Ingest a specific GitHub Mod:** If you want your AI to natively understand a complex mod (like Krastorio 2 or Maraxsis), you can point the GitHub ingestor at it.
    ```powershell
-   python ingest_github_mod.py --repo-url https://github.com/notnotmelon/maraxsis
+   python ingest/ingest_github_mod.py --repo-url https://github.com/notnotmelon/maraxsis
    ```
+
+## Maintenance (Database Hygiene)
+
+LanceDB is append-only: every ingest run adds new immutable versions and small data fragments, and **nothing is garbage-collected automatically**. Re-running an ingest script grows the on-disk history (e.g. `factorio_lancedb` had 155 versions / 469 files before its first compaction). To keep the committed stores lean:
+
+```powershell
+python maintenance/compact_lancedb.py          # compact + prune every data/*_lancedb store
+python maintenance/compact_lancedb.py --check   # read-only; exits non-zero if a store is uncompacted
+```
+
+This runs LanceDB's `Table.optimize()` on each store — compacting fragments, pruning old versions, and folding new rows into existing indices. Do **not** run it while the server or an ingest script is writing.
+
+**Recommended workflow:** let the version history accumulate on feature branches so a PR diff shows exactly what data changed, then run the compaction script before merging to `main` so the committed history stays collapsed.
+
+To enforce that automatically, opt into the bundled pre-push guard (it blocks pushes to `main` while any store is uncompacted):
+
+```powershell
+git config core.hooksPath maintenance/hooks
+# or copy maintenance/hooks/pre-push into .git/hooks/
+```
 
 ## Usage
 

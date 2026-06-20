@@ -14,11 +14,12 @@ TOOL_VERSION = "1.0.0"
 # Initialize FastMCP server
 mcp = FastMCP("Factorio AI Tools")
 
-# Connect to LanceDB instances
-db_path_factorio = os.path.join(os.path.dirname(os.path.abspath(__file__)), "factorio_lancedb")
-db_path_clusterio = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clusterio_lancedb")
-db_path_wiki = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wiki_lancedb")
-db_path_forum = os.path.join(os.path.dirname(os.path.abspath(__file__)), "forum_lancedb")
+# Connect to LanceDB instances (all stores live under ./data)
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+db_path_factorio = os.path.join(DATA_DIR, "factorio_lancedb")
+db_path_clusterio = os.path.join(DATA_DIR, "clusterio_lancedb")
+db_path_wiki = os.path.join(DATA_DIR, "wiki_lancedb")
+db_path_forum = os.path.join(DATA_DIR, "forum_lancedb")
 
 db_factorio = lancedb.connect(db_path_factorio)
 db_clusterio = lancedb.connect(db_path_clusterio)
@@ -28,25 +29,25 @@ db_forum = lancedb.connect(db_path_forum)
 try:
     table_factorio = db_factorio.open_table("docs")
 except Exception as e:
-    print(f"Warning: Could not open Factorio docs table. Did you run ingest_factorio.py? Error: {e}", file=sys.stderr)
+    print(f"Warning: Could not open Factorio docs table. Did you run ingest/ingest_factorio.py? Error: {e}", file=sys.stderr)
     table_factorio = None
 
 try:
     table_clusterio = db_clusterio.open_table("codebase")
 except Exception as e:
-    print(f"Warning: Could not open Clusterio codebase table. Did you run ingest_clusterio.py? Error: {e}", file=sys.stderr)
+    print(f"Warning: Could not open Clusterio codebase table. Did you run ingest/ingest_clusterio.py? Error: {e}", file=sys.stderr)
     table_clusterio = None
 
 try:
     table_wiki = db_wiki.open_table("docs")
 except Exception as e:
-    print(f"Warning: Could not open Factorio wiki table. Did you run ingest_wiki.py? Error: {e}", file=sys.stderr)
+    print(f"Warning: Could not open Factorio wiki table. Did you run ingest/ingest_wiki.py? Error: {e}", file=sys.stderr)
     table_wiki = None
 
 try:
     table_forum = db_forum.open_table("forum")
 except Exception as e:
-    print(f"Warning: Could not open Factorio forum table. Did you run ingest_forum.py? Error: {e}", file=sys.stderr)
+    print(f"Warning: Could not open Factorio forum table. Did you run ingest/ingest_forum.py? Error: {e}", file=sys.stderr)
     table_forum = None
 
 # Initialize embedding model globally
@@ -116,7 +117,7 @@ def search_factorio_docs(queries: list[str], class_filter: str = None, limit: in
         factorio_version: The Factorio version to search against. Defaults to 'latest' (which uses the newest version in the db). Pass '1.1.110' for legacy mods.
     """
     if table_factorio is None:
-        return "Error: Factorio database table not found. Please run ingest_factorio.py first."
+        return "Error: Factorio database table not found. Please run ingest/ingest_factorio.py first."
         
     if not queries:
         return "No queries provided."
@@ -171,7 +172,7 @@ def search_clusterio_code(queries: list[str], node_type: str = None, limit: int 
         limit: Maximum number of chunks to return per query (default 5, max 20).
     """
     if table_clusterio is None:
-        return "Error: Clusterio database table not found. Please run ingest_clusterio.py first."
+        return "Error: Clusterio database table not found. Please run ingest/ingest_clusterio.py first."
         
     if not queries:
         return "No queries provided."
@@ -225,7 +226,7 @@ def search_factorio_wiki(queries: list[str], limit: int = 5) -> str:
         limit: Maximum number of chunks to return per query (default 5, max 20).
     """
     if table_wiki is None:
-        return "Error: Factorio Wiki database table not found. Please run ingest_wiki.py first."
+        return "Error: Factorio Wiki database table not found. Please run ingest/ingest_wiki.py first."
         
     if not queries:
         return "No queries provided."
@@ -268,7 +269,7 @@ def search_factorio_forums(queries: list[str], limit: int = 5) -> str:
         limit: Maximum number of chunks to return per query (default 5, max 20).
     """
     if table_forum is None:
-        return "Error: Factorio Forum database table not found. Please run ingest_forum.py first."
+        return "Error: Factorio Forum database table not found. Please run ingest/ingest_forum.py first."
         
     if not queries:
         return "No queries provided."
@@ -368,7 +369,7 @@ def encode_factorio_blueprint(json_string: str) -> str:
 import urllib.request
 import platform
 
-db_path_mod = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mod_lancedb")
+db_path_mod = os.path.join(DATA_DIR, "mod_lancedb")
 try:
     db_mod = lancedb.connect(db_path_mod)
     table_mod = db_mod.open_table("codebase")
@@ -387,7 +388,7 @@ def search_mod_code(queries: list[str], mod_name: str = None, limit: int = 5) ->
         limit: Maximum number of chunks to return per query (default 5, max 20).
     """
     if table_mod is None:
-        return "Error: Mod database table not found. Please run ingest_github_mod.py first."
+        return "Error: Mod database table not found. Please run ingest/ingest_github_mod.py first."
         
     if not queries:
         return "No queries provided."

@@ -21,8 +21,12 @@
 .gitignore      text eol=lf
 .gitattributes  text eol=lf
 
+# Git hooks are run by sh and must keep LF endings (no file extension, so the
+# rules above don't catch them); CRLF would break them on Windows checkout.
+maintenance/hooks/*  text eol=lf
+
 # Pre-built LanceDB vector stores are binary data — never apply line-ending
 # (or any) conversion. These rules come last so they win over the patterns
 # above for any text-looking files (hint .json, version.txt) inside the stores.
-*_lancedb/**    binary
-*.lance         binary
+data/*_lancedb/**    binary
+*.lance              binary
