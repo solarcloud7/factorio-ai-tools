@@ -4,3 +4,8 @@ __pycache__/
 .claude/
 *.pyc
 .env
+
+# Build Artifacts
+build/
+dist/
+*.egg-info/
