@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "factorio-ai-tools"
 dynamic = ["version"]
 authors = [
-  { name="Solar" }
+  { name="solarcloud7" }
 ]
 description = "A lightning-fast, hybrid-search Vector Database and Model Context Protocol (MCP) server for Factorio modding."
 readme = "README.md"

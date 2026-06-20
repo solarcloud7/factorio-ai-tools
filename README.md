@@ -1,5 +1,8 @@
 <div align="center">
   <img src="docs/assets/factorio-ai-tools.png" alt="Factorio AI Tools Icon" width="200"/>
+  <br/>
+  <a href="https://pypi.org/project/factorio-ai-tools/"><img src="https://img.shields.io/pypi/v/factorio-ai-tools" alt="PyPI - Version"/></a>
+  <a href="https://github.com/solarcloud7/factorio-ai-tools/releases"><img src="https://img.shields.io/github/v/release/solarcloud7/factorio-ai-tools" alt="GitHub Release"/></a>
 </div>
 
 # Factorio AI Tools (MCP Server)
@@ -42,12 +45,21 @@ If you have Docker Desktop installed, you can simply pull the pre-packaged conta
       "command": "docker",
       "args": ["run", "-i", "--rm", "ghcr.io/solarcloud7/factorio-ai-tools:latest"]
     }
+    }
   }
 }
 ```
 
-
-
+### Selective Tool Loading (Optional)
+By default, the server loads all available tools. If you only want to expose specific tools to your LLM, you can use the `--enable-tools` or `--disable-tools` arguments.
+For example, to *only* load the doc search and the blueprint decoder using `uvx`:
+```json
+      "command": "uvx",
+      "args": [
+        "factorio-ai-tools",
+        "--enable-tools", "search_factorio_docs,decode_factorio_blueprint"
+      ]
+```
 ---
 
 ### Manual Developer Setup

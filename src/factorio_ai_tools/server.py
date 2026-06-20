@@ -11,8 +11,32 @@ from mcp.server.fastmcp import FastMCP
 # Define tool version
 TOOL_VERSION = "1.0.0"
 
+import argparse
+
+parser = argparse.ArgumentParser(description="Factorio AI Tools MCP Server")
+parser.add_argument("--enable-tools", type=str, help="Comma-separated list of tools to enable")
+parser.add_argument("--disable-tools", type=str, help="Comma-separated list of tools to disable")
+args, _ = parser.parse_known_args()
+
+enabled_tools = [t.strip() for t in args.enable_tools.split(",")] if args.enable_tools else None
+disabled_tools = [t.strip() for t in args.disable_tools.split(",")] if args.disable_tools else []
+
+def tool_enabled(tool_name: str) -> bool:
+    if disabled_tools and tool_name in disabled_tools:
+        return False
+    if enabled_tools and tool_name not in enabled_tools:
+        return False
+    return True
+
 # Initialize FastMCP server
 mcp = FastMCP("Factorio AI Tools")
+
+def optional_tool():
+    def decorator(func):
+        if tool_enabled(func.__name__):
+            return mcp.tool()(func)
+        return func
+    return decorator
 
 import urllib.request
 import zipfile
@@ -88,7 +112,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
 model = SentenceTransformer(model_name, device=device)
 
-@mcp.tool()
+@optional_tool()
 def get_mcp_version_info() -> str:
     """
     Get the version metadata of the MCP server and the internal Factorio/Clusterio LanceDB datasets.
@@ -138,7 +162,7 @@ For gameplay mechanics, formulas, ratios, fluid mechanics, or general game knowl
 Never assume a method or concept exists without verifying it in the docs.
 You also have the ability to decode and encode Factorio Blueprint strings using `decode_factorio_blueprint` and `encode_factorio_blueprint`. You can use these tools to dynamically inspect, generate, or optimize factory layouts directly for the user!"""
 
-@mcp.tool()
+@optional_tool()
 def search_factorio_docs(queries: list[str], class_filter: str = None, limit: int = 5, factorio_version: str = "latest") -> str:
     """
     Search Factorio API documentation.
@@ -194,7 +218,7 @@ def search_factorio_docs(queries: list[str], class_filter: str = None, limit: in
     except Exception as e:
         return f"Error executing search: {str(e)}"
 
-@mcp.tool()
+@optional_tool()
 def search_clusterio_code(queries: list[str], node_type: str = None, limit: int = 5) -> str:
     """
     Search the Clusterio TypeScript codebase using semantic AST-chunked RAG.
@@ -249,7 +273,7 @@ def search_clusterio_code(queries: list[str], node_type: str = None, limit: int 
     except Exception as e:
         return f"Error executing search: {str(e)}"
 
-@mcp.tool()
+@optional_tool()
 def search_factorio_wiki(queries: list[str], limit: int = 5) -> str:
     """
     Search the official Factorio Wiki for gameplay mechanics, recipes, tutorials, or formulas.
@@ -292,7 +316,7 @@ def search_factorio_wiki(queries: list[str], limit: int = 5) -> str:
     except Exception as e:
         return f"Error executing wiki search: {str(e)}"
 
-@mcp.tool()
+@optional_tool()
 def search_factorio_forums(queries: list[str], limit: int = 5) -> str:
     """
     Search the official Factorio Forums (specifically Modding Help) for obscure bugs, community fixes, and undocumented tricks.
@@ -335,7 +359,7 @@ def search_factorio_forums(queries: list[str], limit: int = 5) -> str:
     except Exception as e:
         return f"Error executing forum search: {str(e)}"
 
-@mcp.tool()
+@optional_tool()
 def decode_factorio_blueprint(blueprint_string: str) -> str:
     """
     Decodes a Factorio blueprint string (e.g. '0eNq...') into a formatted JSON string.
@@ -373,7 +397,7 @@ def decode_factorio_blueprint(blueprint_string: str) -> str:
     except Exception as e:
         return f"Error decoding blueprint: {str(e)}"
 
-@mcp.tool()
+@optional_tool()
 def encode_factorio_blueprint(json_string: str) -> str:
     """
     Encodes a raw Factorio blueprint JSON string back into a Factorio blueprint string (e.g. '0eNq...').
@@ -410,7 +434,7 @@ except Exception as e:
     print(f"Warning: Could not open Mod codebase table. Error: {e}", file=sys.stderr)
     table_mod = None
 
-@mcp.tool()
+@optional_tool()
 def search_mod_code(queries: list[str], mod_name: str = None, limit: int = 5) -> str:
     """
     Search the custom GitHub mod codebase using semantic AST-chunked RAG.
@@ -465,7 +489,7 @@ def search_mod_code(queries: list[str], mod_name: str = None, limit: int = 5) ->
     except Exception as e:
         return f"Error executing mod code search: {str(e)}"
 
-@mcp.tool()
+@optional_tool()
 def factorio_mod_portal_analyzer(mod_name: str) -> str:
     """
     Query the Factorio Mod Portal API for a specific mod to fetch metadata, dependencies, releases, and description.
