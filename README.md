@@ -31,6 +31,11 @@ This project consists of 4 main components:
    python ingest_wiki.py
    ```
 
+4. **(Optional) Ingest a specific GitHub Mod:** If you want your AI to natively understand a complex mod (like Krastorio 2 or Maraxsis), you can point the GitHub ingestor at it.
+   ```powershell
+   python ingest_github_mod.py --repo-url https://github.com/notnotmelon/maraxsis
+   ```
+
 ## Usage
 
 Hook this server into Claude Desktop (or any other MCP client) by adding the following to your `claude_desktop_config.json`:
