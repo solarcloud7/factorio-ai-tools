@@ -16,3 +16,6 @@ buildSteps:
   - command: python
     args:
       - ingest_clusterio.py
+  - command: python
+    args:
+      - ingest_wiki.py

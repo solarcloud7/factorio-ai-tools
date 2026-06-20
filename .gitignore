@@ -1,4 +1,6 @@
 venv/
+.mod_temp/
 __pycache__/
+.claude/
 *.pyc
 .env
