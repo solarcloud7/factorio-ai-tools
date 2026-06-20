@@ -11,29 +11,50 @@ This project consists of 4 main components:
 4. **GitHub Mod Ingestion (`ingest_github_mod.py`)**: A generalized pipeline that clones, AST-parses (via `tree-sitter-lua`), and incrementally hashes any GitHub Mod codebase (e.g., Maraxsis) into a semantic `mod_lancedb` index.
 5. **FastMCP Server (`server.py`)**: The bridge that connects the underlying LanceDB vector databases to an LLM via the standard Model Context Protocol.
 
-## Setup
+## Setup & Usage
 
-1. Create a python virtual environment:
-   ```powershell
-   python -m venv venv
-   .\venv\Scripts\Activate.ps1
-   ```
+There are two primary ways to install and use this MCP server locally with Claude Desktop:
 
-2. Install dependencies:
-   ```powershell
-   pip install -r requirements.txt
-   ```
+### Method 1: Standalone Windows Executable (Easiest)
+For standard Windows users, you don't need Python or any dependencies installed.
+1. Download the latest `factorio-ai-tools-windows.zip` from the [GitHub Releases](https://github.com/solarcloud7/factorio-ai-tools/releases) page.
+2. Extract the `.zip` file into a folder on your computer (e.g. `C:\FactorioMCP`).
+3. Add the following to your Claude Desktop config (`%APPDATA%\Claude\claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "factorio-ai-tools": {
+      "command": "C:\\FactorioMCP\\factorio-ai-tools.exe",
+      "args": []
+    }
+  }
+}
+```
 
-3. Build the databases. Run each script at least once to populate the LanceDB indexes:
-   ```powershell
-   python ingest/ingest_factorio.py
-   python ingest/ingest_clusterio.py
-   python ingest/ingest_wiki.py
-   ```
+### Method 2: Docker (Best for Mac/Linux/Devs)
+If you have Docker Desktop installed, you can simply pull the pre-packaged container natively.
+1. Add the following to your Claude Desktop config (no download required!):
+```json
+{
+  "mcpServers": {
+    "factorio-ai-tools": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "ghcr.io/solarcloud7/factorio-ai-tools:latest"]
+    }
+  }
+}
+```
 
-4. **(Optional) Ingest a specific GitHub Mod:** If you want your AI to natively understand a complex mod (like Krastorio 2 or Maraxsis), you can point the GitHub ingestor at it.
+---
+
+### Manual Developer Setup
+If you wish to run the python scripts manually or ingest custom codebases:
+1. Create a python virtual environment: `python -m venv venv` and activate it.
+2. Run `pip install -r requirements.txt`.
+3. *(Optional)* Run the ingestion scripts (`python ingest_factorio.py`, etc.) to rebuild the LanceDB tables.
+4. *(Optional)* Ingest a specific GitHub Mod:
    ```powershell
-   python ingest/ingest_github_mod.py --repo-url https://github.com/notnotmelon/maraxsis
+   python ingest_github_mod.py --repo-url https://github.com/notnotmelon/maraxsis
    ```
 
 ## Maintenance (Database Hygiene)

@@ -12,10 +12,10 @@ buildSteps:
       - requirements.txt
   - command: python
     args:
-      - ingest_factorio.py
+      - ingest/ingest_factorio.py
   - command: python
     args:
-      - ingest_clusterio.py
+      - ingest/ingest_clusterio.py
   - command: python
     args:
-      - ingest_wiki.py
+      - ingest/ingest_wiki.py

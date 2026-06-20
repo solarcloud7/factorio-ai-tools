@@ -14,8 +14,40 @@ TOOL_VERSION = "1.0.0"
 # Initialize FastMCP server
 mcp = FastMCP("Factorio AI Tools")
 
-# Connect to LanceDB instances (all stores live under ./data)
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+import urllib.request
+import zipfile
+import shutil
+
+# Determine if we are running locally (git/docker) or via PyPI/uvx
+LOCAL_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+USER_DATA_DIR = os.path.expanduser("~/.factorio-ai-tools/data")
+
+if os.path.exists(LOCAL_DATA_DIR) or os.getenv("FACTORIO_MCP_LOCAL_MODE"):
+    DATA_DIR = LOCAL_DATA_DIR
+else:
+    DATA_DIR = USER_DATA_DIR
+
+def ensure_databases():
+    if os.path.exists(os.path.join(DATA_DIR, "factorio_lancedb")):
+        return
+        
+    os.makedirs(DATA_DIR, exist_ok=True)
+    print(f"Databases not found locally. Downloading to {DATA_DIR}...", file=sys.stderr)
+    url = "https://github.com/solarcloud7/factorio-ai-tools/releases/latest/download/factorio_lancedb.zip"
+    zip_path = os.path.join(DATA_DIR, "databases.zip")
+    
+    try:
+        urllib.request.urlretrieve(url, zip_path)
+        print("Extracting databases...", file=sys.stderr)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(DATA_DIR)
+        os.remove(zip_path)
+        print("Databases successfully installed!", file=sys.stderr)
+    except Exception as e:
+        print(f"Failed to download databases: {e}", file=sys.stderr)
+
+ensure_databases()
+
 db_path_factorio = os.path.join(DATA_DIR, "factorio_lancedb")
 db_path_clusterio = os.path.join(DATA_DIR, "clusterio_lancedb")
 db_path_wiki = os.path.join(DATA_DIR, "wiki_lancedb")
@@ -507,6 +539,9 @@ def factorio_log_inspector(custom_path: str = None, tail_lines: int = 150) -> st
     except Exception as e:
         return f"Error reading log file: {str(e)}"
 
-if __name__ == '__main__':
+def main():
     # Run the server using stdio
     mcp.run()
+
+if __name__ == '__main__':
+    main()
