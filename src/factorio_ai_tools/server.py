@@ -428,26 +428,26 @@ def encode_factorio_blueprint(json_string: str) -> str:
 import urllib.request
 import platform
 
-db_path_mod = os.path.join(DATA_DIR, "mod_lancedb")
+db_path_repo = os.path.join(DATA_DIR, "repo_lancedb")
 try:
-    db_mod = lancedb.connect(db_path_mod)
-    table_mod = db_mod.open_table("codebase")
+    db_repo = lancedb.connect(db_path_repo)
+    table_repo = db_repo.open_table("codebase")
 except Exception as e:
-    print(f"Warning: Could not open Mod codebase table. Error: {e}", file=sys.stderr)
-    table_mod = None
+    print(f"Warning: Could not open Repo codebase table. Error: {e}", file=sys.stderr)
+    table_repo = None
 
 @optional_tool()
-def search_mod_code(queries: list[str], mod_name: str = None, limit: int = 5) -> str:
+def search_github_code(queries: list[str], repo_name: str = None, limit: int = 5) -> str:
     """
-    Search the custom GitHub mod codebase using semantic AST-chunked RAG.
+    Search an ingested GitHub codebase (like clusterio-docker or mods) using semantic AST-chunked RAG.
     
     Args:
         queries: A list of semantic search queries to batch process.
-        mod_name: Optional mod name filter (e.g. 'maraxsis') which corresponds to the GitHub repo name.
+        repo_name: Optional repository name filter (e.g. 'clusterio-docker') which corresponds to the GitHub repo URL.
         limit: Maximum number of chunks to return per query (default 5, max 20).
     """
-    if table_mod is None:
-        return "Error: Mod database table not found. Please run ingest/ingest_github_mod.py first."
+    if table_repo is None:
+        return "Error: Repo database table not found. Please run ingest/ingest_github_repo.py first."
         
     if not queries:
         return "No queries provided."
@@ -461,11 +461,11 @@ def search_mod_code(queries: list[str], mod_name: str = None, limit: int = 5) ->
         all_formatted_chunks = []
         
         for idx, query_vec in enumerate(query_vecs):
-            q = table_mod.search(query_vec.tolist())
+            q = table_repo.search(query_vec.tolist())
             
-            if mod_name:
-                safe_mod = mod_name.replace("'", "''")
-                q = q.where(f"repo_url LIKE '%{safe_mod}%'")
+            if repo_name:
+                safe_repo = repo_name.replace("'", "''")
+                q = q.where(f"repo_url LIKE '%{safe_repo}%'")
                 
             results = q.limit(limit).to_list()
             
@@ -476,9 +476,9 @@ def search_mod_code(queries: list[str], mod_name: str = None, limit: int = 5) ->
             else:
                 for i, row in enumerate(results):
                     chunk = (
-                        f"**Result {i+1}** - {row['node_name']} ({row['node_type']}) in Mod: {row['repo_url']}\n"
+                        f"**Result {i+1}** - {row['node_name']} ({row['node_type']}) in Repo: {row['repo_url']}\n"
                         f"**File:** `{row['file_path']}`\n\n"
-                        f"```lua\n"
+                        f"```\n"
                         f"{row['content']}\n"
                         f"```"
                     )
