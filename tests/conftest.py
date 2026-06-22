@@ -32,6 +32,14 @@ class FakeEmbedder:
         return common.EMBEDDING_DIM
 
 
+@pytest.fixture(autouse=True)
+def _offline_tokenizer(monkeypatch):
+    """Stub count_tokens (~chars/4) so the token-sizing path never downloads the
+    real tokenizer. Tests assert chunking LOGIC; the real tokenizer is exercised
+    in the manual dry-run / real ingest."""
+    monkeypatch.setattr(common, "count_tokens", lambda t: (len(t or "") + 3) // 4)
+
+
 @pytest.fixture
 def fake_embedder(monkeypatch):
     """Patch the shared singleton so common.embed()/load_embedder() use the fake."""

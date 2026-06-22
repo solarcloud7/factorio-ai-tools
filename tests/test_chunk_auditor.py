@@ -1,5 +1,8 @@
-"""Tests for the ChunkAuditor — the always-on, regression guard for silent
-chunking failures (oversized/tiny/empty/explosion/zero-chunk)."""
+"""Tests for the ChunkAuditor — the always-on, token-based regression guard for
+silent chunking failures (oversized/tiny/empty/explosion/zero-chunk/dups).
+
+The autouse conftest stub makes count_tokens ~= chars/4, so token thresholds
+below are expressed against that ratio."""
 
 import pytest
 
@@ -7,16 +10,22 @@ from factorio_ai_tools.ingest import common
 
 
 def test_clean_input_passes():
-    a = common.ChunkAuditor("s", min_chars=5, max_chars=1000, explosion_per_source=10, strict=False)
+    a = common.ChunkAuditor("s", min_chars=5, max_tokens=1000, explosion_per_source=10, strict=False)
     for i in range(3):
         a.add("a perfectly reasonable chunk of text", source=f"f{i}", node_type="function")
     assert a.summary()["result"] == "PASS"
 
 
+def test_oversized_measured_in_tokens():
+    a = common.ChunkAuditor("s", max_tokens=10, strict=False)
+    a.add("x" * 200, source="f")  # ~50 tokens > 10
+    assert a.summary()["oversized"] == 1
+
+
 def test_flags_oversized_tiny_explosion_and_zero_chunk():
-    a = common.ChunkAuditor("s", min_chars=10, max_chars=100, explosion_per_source=5, strict=False)
-    a.add("{}", source="x.lua", node_type="table")          # tiny + (empty after strip? no)
-    a.add("Z" * 500, source="x.lua", node_type="table")     # oversized
+    a = common.ChunkAuditor("s", min_chars=10, max_tokens=25, explosion_per_source=5, strict=False)
+    a.add("{}", source="x.lua", node_type="table")          # tiny (2 chars)
+    a.add("Z" * 500, source="x.lua", node_type="table")     # ~125 tokens -> oversized
     for _ in range(8):
         a.add("a table literal chunk", source="x.lua", node_type="table")  # explosion on x.lua
     a.note_source("empty.lua", 1234, 0)                     # non-empty file, zero chunks
@@ -35,8 +44,8 @@ def test_empty_chunk_counted():
 
 
 def test_strict_raises_on_fail():
-    a = common.ChunkAuditor("s", max_chars=100, strict=True)
-    a.add("Z" * 500, source="y")
+    a = common.ChunkAuditor("s", max_tokens=100, strict=True)
+    a.add("Z" * 500, source="y")  # ~125 tokens -> oversized -> FAIL
     with pytest.raises(common.ChunkHealthError):
         a.summary()
 
@@ -56,15 +65,18 @@ def test_add_batch_measures_the_embedded_field():
     assert s["explosions"]  # 5 chunks from source "a" exceeds threshold 2
 
 
-def test_reproduces_lua_table_blowup_and_flags_it():
-    """The exact class of bug we hit with factorio-data: a data-heavy Lua file
-    where every table_constructor becomes a chunk -> explosion + tiny `{}`."""
-    src = "data = {" + ",".join("{a=%d, b={}}" % i for i in range(60)) + "}\n"
-    chunks = common.extract_ast_chunks(src.encode(), "lua")
-    a = common.ChunkAuditor("repro", min_chars=10, max_chars=2000, explosion_per_source=50, strict=False)
-    for c in chunks:
-        a.add(c["content"], source="data.lua", node_type=c["node_type"])
+def test_auditor_flags_explosion_synthetically():
+    # The auditor's explosion guard (decoupled from the now-fixed AST query).
+    a = common.ChunkAuditor("repro", explosion_per_source=50, strict=False)
+    for i in range(60):
+        a.add(f"chunk {i} content body", source="data.lua", node_type="table")
     s = a.summary()
-    assert s["by_type"].get("table", 0) > 50          # the blowup
-    assert s["result"] == "FAIL"                       # and it is caught, not silent
+    assert s["result"] == "FAIL"
     assert any(src == "data.lua" for src, _ in s["explosions"])
+
+
+def test_note_dups_surfaces_in_summary():
+    a = common.ChunkAuditor("s", strict=False)
+    a.add("real content here", source="f")
+    a.note_dups(3)
+    assert a.summary()["dups"] == 3

@@ -22,22 +22,50 @@ def test_get_hash_str_and_bytes_match():
     assert len(common.get_hash("a")) == 64
 
 
-def test_extract_ast_chunks_typescript():
+def test_extract_ast_chunks_typescript_top_level():
+    # Top-level only: the class and the function are chunks; the method lives
+    # inside the class chunk (not emitted standalone) — no nested duplication.
     chunks = common.extract_ast_chunks(
         b"class Foo { bar(){ return 1; } }\nfunction baz(){}", "typescript"
     )
     types = {c["node_type"] for c in chunks}
     names = {c["node_name"] for c in chunks}
-    assert {"class", "function", "method"} <= types
-    assert {"Foo", "baz", "bar"} <= names
+    assert types == {"class", "function"}
+    assert {"Foo", "baz"} <= names
+    assert any("bar" in c["content"] for c in chunks)
 
 
-def test_extract_ast_chunks_lua():
+def test_extract_ast_chunks_lua_keeps_tables():
     chunks = common.extract_ast_chunks(
         b"function greet(n)\n return n\nend\nlocal t = {a=1}", "lua"
     )
     types = {c["node_type"] for c in chunks}
     assert "function" in types and "table" in types
+
+
+def test_extract_ast_chunks_recursive_split_no_explosion():
+    # A big nested Lua table, small budget -> recursively split into bounded
+    # chunks, NOT one-per-nested-table (the factorio-data explosion).
+    src = b"data = {" + b",".join(b'{name="r%d", x=%d}' % (i, i) for i in range(50)) + b"}"
+    chunks = common.extract_ast_chunks(src, "lua", max_tokens=20)
+    assert chunks
+    assert all(common.count_tokens(c["content"]) <= 20 for c in chunks)
+    assert len(chunks) < 50  # grouped per budget, not exploded
+
+
+def test_normalize_drops_tiny_and_caps_tokens():
+    chunks = [{"content": "{}"}, {"content": "X" * 4000}, {"content": "fine content here"}]
+    out, stats = common.normalize_chunks(chunks, max_tokens=50)
+    assert stats["dropped_tiny"] >= 1
+    assert all(common.count_tokens(c["content"]) <= 50 for c in out)
+
+
+def test_normalize_dedup_toggle():
+    chunks = [{"content": "same text here", "v": "a"}, {"content": "same text here", "v": "b"}]
+    out_dedup, s1 = common.normalize_chunks(chunks)
+    assert len(out_dedup) == 1 and s1["dropped_dup"] == 1
+    out_keep, s2 = common.normalize_chunks(chunks, dedup=False)
+    assert len(out_keep) == 2 and s2["dropped_dup"] == 0
 
 
 def test_extract_ast_chunks_unsupported_returns_none():

@@ -34,9 +34,12 @@ SCHEMA = pa.schema([
 ])
 
 
-def chunk_text(text, max_words=300):
+def chunk_text(text, max_words=300, overlap=30):
     words = text.split()
-    return [" ".join(words[i:i + max_words]) for i in range(0, len(words), max_words)]
+    if not words:
+        return []
+    step = max(1, max_words - overlap)
+    return [" ".join(words[i:i + max_words]) for i in range(0, len(words), step)]
 
 
 def load_topic_urls():
@@ -63,9 +66,14 @@ def scrape_topic_content(url):
 
 
 def main():
-    db, _db_path = common.connect_store("forum_lancedb")
-    table = common.ensure_table(db, "forum", SCHEMA)
-    model = common.load_embedder()
+    dry = common.dry_run_requested()
+    if dry:
+        common.safe_print("DRY RUN: chunk + audit only, no embed/write.")
+        table = model = None
+    else:
+        db, _db_path = common.connect_store("forum_lancedb")
+        table = common.ensure_table(db, "forum", SCHEMA)
+        model = common.load_embedder()
     auditor = common.ChunkAuditor("forum_lancedb")
 
     common.safe_print(f"Reading curated links from {FORUM_LINKS_FILE}...")
@@ -83,34 +91,39 @@ def main():
             current_hash = common.get_hash(content)
 
             safe_url = url.replace("'", "''")
-            if len(table) > 0:
+            if table is not None and len(table) > 0:
                 existing = table.search().where(f"file_path = '{safe_url}'").limit(1).to_list()
                 if existing and existing[0].get('content_hash') == current_hash:
                     common.safe_print(f"Skipping {url}, content unchanged.")
                     continue
                 table.delete(f"file_path = '{safe_url}'")
 
-            topic_chunks = chunk_text(content)
-            auditor.note_source(url, len(content), len(topic_chunks))
-            for i, chunk in enumerate(topic_chunks):
-                chunk_content = f"Topic: {title}\n\n{chunk}"
+            chunk_dicts = [{"content": f"Topic: {title}\n\n{ch}"} for ch in chunk_text(content)]
+            chunk_dicts, nstats = common.normalize_chunks(
+                chunk_dicts, content_key="content", max_tokens=common.EMBED_MAX_TOKENS
+            )
+            auditor.note_dups(nstats["dropped_dup"])
+            auditor.note_source(url, len(content), len(chunk_dicts))
+            for i, cd in enumerate(chunk_dicts):
+                chunk_content = cd["content"]
                 auditor.add(chunk_content, source=url)
-                embedding = common.embed([chunk_content], model)[0].tolist()
-                records.append({
-                    "id": f"forum_{topic_count}_{i}",
-                    "file_path": url,
-                    "class_name": title,
-                    "content": chunk_content,
-                    "version": "latest",
-                    "content_hash": current_hash,
-                    "vector": embedding,
-                })
+                if not dry:
+                    embedding = common.embed([chunk_content], model)[0].tolist()
+                    records.append({
+                        "id": f"forum_{topic_count}_{i}",
+                        "file_path": url,
+                        "class_name": title,
+                        "content": chunk_content,
+                        "version": "latest",
+                        "content_hash": current_hash,
+                        "vector": embedding,
+                    })
 
             topic_count += 1
             if topic_count % 10 == 0:
                 common.safe_print(f"Processed {topic_count} topics...")
 
-            if len(records) >= BATCH_SIZE:
+            if not dry and len(records) >= BATCH_SIZE:
                 table.add(records)
                 records = []
 
@@ -118,11 +131,17 @@ def main():
         except Exception as e:
             common.safe_print(f"Error parsing {url}: {e}")
 
-    if records:
+    if not dry and records:
         table.add(records)
 
+    if not dry and table is not None and len(table) > 0:
+        try:
+            table.create_fts_index("content", replace=True)
+        except Exception as e:
+            common.safe_print(f"FTS index skipped: {e}")
+
     auditor.summary()
-    common.safe_print(f"Ingestion complete! Embedded {topic_count} topics into LanceDB.")
+    common.safe_print(f"{'Audited' if dry else 'Embedded'} {topic_count} topics.")
 
 
 if __name__ == '__main__':

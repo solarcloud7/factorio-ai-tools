@@ -65,9 +65,14 @@ def main():
                 all_files.append(f)
     common.safe_print(f"Found {len(all_files)} total files.")
 
-    common.safe_print("Connecting to LanceDB...")
-    db, db_path = common.connect_store("clusterio_lancedb")
-    table = common.ensure_table(db, "codebase", CodeChunk)
+    dry = common.dry_run_requested()
+    if dry:
+        common.safe_print("DRY RUN: chunk + audit only, no embed/write.")
+        db = db_path = table = None
+    else:
+        common.safe_print("Connecting to LanceDB...")
+        db, db_path = common.connect_store("clusterio_lancedb")
+        table = common.ensure_table(db, "codebase", CodeChunk)
 
     common.safe_print("Extracting chunks...")
     auditor = common.ChunkAuditor("clusterio_lancedb")
@@ -85,7 +90,7 @@ def main():
         # ./clusterio\plugins\...) so results read well and per-plugin filtering works.
         rel_path = os.path.relpath(f, repo_path).replace(os.sep, "/")
         safe_f = rel_path.replace("'", "''")
-        if len(table) > 0:
+        if table is not None and len(table) > 0:
             existing = table.search().where(f"file_path = '{safe_f}'").limit(1).to_list()
             if existing and existing[0].get('content_hash') == f_hash:
                 skipped_count += 1
@@ -105,9 +110,17 @@ def main():
     common.safe_print(f"Skipped {skipped_count} unchanged files.")
     common.safe_print(f"Extracted {len(all_chunks)} new/modified chunks.")
 
+    all_chunks, nstats = common.normalize_chunks(all_chunks, content_key="content")
+    auditor.note_dups(nstats["dropped_dup"])
+    common.safe_print(
+        f"Normalized to {len(all_chunks)} chunks "
+        f"(dropped {nstats['dropped_tiny']} tiny, {nstats['dropped_dup']} dup)."
+    )
     auditor.add_batch(all_chunks, text_key="content", source_key="file_path")
     auditor.summary()
 
+    if dry:
+        return
     if len(all_chunks) == 0:
         common.safe_print("Database is perfectly up to date!")
         _write_version(repo_path, db_path)
@@ -123,6 +136,10 @@ def main():
             item["vector"] = embeddings[j].tolist()
         table.add(batch)
 
+    try:
+        table.create_fts_index("content", replace=True)
+    except Exception as e:
+        common.safe_print(f"FTS index skipped: {e}")
     _write_version(repo_path, db_path)
     common.safe_print("Ingestion complete!")
 

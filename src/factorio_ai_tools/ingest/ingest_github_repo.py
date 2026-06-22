@@ -60,6 +60,8 @@ def main():
     parser.add_argument("--local-path", type=str, help="Local directory path to ingest")
     parser.add_argument("--strict-chunks", action="store_true",
                         help="Exit non-zero if chunk-health validation fails (else warn only).")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Chunk + audit the full corpus with NO embed/write (measure-once gate).")
     args = parser.parse_args()
 
     if not args.repo_url and not args.local_path:
@@ -81,13 +83,19 @@ def main():
 
     common.safe_print(f"Ingesting repository: {repo_name} from {target_dir}")
 
-    db, _db_path = common.connect_store("repo_lancedb")
-    table = common.ensure_table(db, "codebase", SCHEMA)
-    model = common.load_embedder()
+    dry = common.dry_run_requested()
     auditor = common.ChunkAuditor("repo_lancedb")
+    if dry:
+        common.safe_print("DRY RUN: chunk + audit only, no embed/write.")
+        table = model = None
+        has_rows = False
+    else:
+        db, _db_path = common.connect_store("repo_lancedb")
+        table = common.ensure_table(db, "codebase", SCHEMA)
+        model = common.load_embedder()
+        has_rows = len(table) > 0
 
     safe_repo = repo_name.replace("'", "''")
-    has_rows = len(table) > 0
 
     batch = []
     batch_size = 50
@@ -100,19 +108,19 @@ def main():
             return
         for b in batch:
             auditor.add(b["text_to_embed"], source=b["file_path"], node_type=b["node_type"])
-        vectors = common.embed([b["text_to_embed"] for b in batch], model)
-        rows = [{
-            "vector": vectors[i].tolist(),
-            "repo_url": b["repo_url"],
-            "file_path": b["file_path"],
-            "node_name": b["node_name"],
-            "node_type": b["node_type"],
-            "content": b["content"],
-            "content_hash": b["content_hash"],
-        } for i, b in enumerate(batch)]
-        table.add(rows)
-        total_chunks += len(rows)
-        common.safe_print(f"Ingested {total_chunks} chunks...")
+        if not dry:
+            vectors = common.embed([b["text_to_embed"] for b in batch], model)
+            table.add([{
+                "vector": vectors[i].tolist(),
+                "repo_url": b["repo_url"],
+                "file_path": b["file_path"],
+                "node_name": b["node_name"],
+                "node_type": b["node_type"],
+                "content": b["content"],
+                "content_hash": b["content_hash"],
+            } for i, b in enumerate(batch)])
+        total_chunks += len(batch)
+        common.safe_print(f"{'Audited' if dry else 'Ingested'} {total_chunks} chunks...")
         batch = []
 
     for root, dirs, files in os.walk(target_dir):
@@ -145,7 +153,8 @@ def main():
                     continue
                 table.delete(where)
 
-            file_chunks = chunk_file(src_bytes, ext)
+            file_chunks, nstats = common.normalize_chunks(chunk_file(src_bytes, ext))
+            auditor.note_dups(nstats["dropped_dup"])
             auditor.note_source(rel_path, len(src_bytes), len(file_chunks))
             for chunk in file_chunks:
                 context_text = (f"File: {rel_path}\nComponent: {chunk['node_name']}\n"
@@ -163,6 +172,11 @@ def main():
                     flush()
 
     flush()
+    if not dry:
+        try:
+            table.create_fts_index("content", replace=True)
+        except Exception as e:
+            common.safe_print(f"FTS index skipped: {e}")
     auditor.summary()
     common.safe_print(f"Skipped {skipped_files} unchanged files.")
     common.safe_print(f"\nDone! Ingested {total_chunks} total chunks for repository {repo_name}.")

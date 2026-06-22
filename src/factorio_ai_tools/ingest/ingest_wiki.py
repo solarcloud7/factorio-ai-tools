@@ -34,8 +34,13 @@ def chunk_text(text, title, content_hash, chunk_size=1500, overlap=200):
 
 
 def main():
-    db, _db_path = common.connect_store("wiki_lancedb")
-    table = common.ensure_table(db, "docs", WikiDoc)
+    dry = common.dry_run_requested()
+    if dry:
+        common.safe_print("DRY RUN: chunk + audit only, no embed/write.")
+        table = None
+    else:
+        db, _db_path = common.connect_store("wiki_lancedb")
+        table = common.ensure_table(db, "docs", WikiDoc)
 
     session = requests.Session()
     session.headers.update({"User-Agent": "FactorioAIToolsBot/1.0 (https://github.com/factorio-ai-tools)"})
@@ -78,7 +83,7 @@ def main():
                 chash = common.get_hash(wikitext)
 
                 safe_db_title = title.replace("'", "''")
-                if len(table) > 0:
+                if table is not None and len(table) > 0:
                     existing = table.search().where(f"title = '{safe_db_title}'").limit(1).to_list()
                     if existing and existing[0].get('content_hash') == chash:
                         common.safe_print(f"Skipping {title}, unchanged.")
@@ -93,10 +98,14 @@ def main():
 
     common.safe_print(f"Extracted {len(all_chunks)} new chunks total.")
 
+    all_chunks, nstats = common.normalize_chunks(all_chunks, content_key="text")
     auditor = common.ChunkAuditor("wiki_lancedb")
+    auditor.note_dups(nstats["dropped_dup"])
     auditor.add_batch(all_chunks, text_key="text", source_key="title")
     auditor.summary()
 
+    if dry:
+        return
     if len(all_chunks) == 0:
         common.safe_print("Nothing new to ingest.")
         return

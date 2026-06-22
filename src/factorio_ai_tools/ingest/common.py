@@ -33,6 +33,13 @@ REPO_ROOT = os.path.dirname(
 
 EMBEDDING_DIM = 768
 
+# Token budgets for chunking. The embedder (bge-base-en-v1.5) hard-caps at 512
+# tokens and silently truncates beyond, so sizing is measured in REAL tokens, not
+# chars (code tokenizes ~2-4x denser than prose, so a char cap under-counts).
+EMBED_MAX_TOKENS = 512        # auditor cap on the full embedded text (incl. context prefix)
+CONTENT_MAX_TOKENS = 400      # cap on a chunk's raw content; leaves headroom for the prefix
+MIN_CHUNK_CHARS = 10          # drop a chunk whose stripped raw content is shorter than this
+
 
 class ChunkHealthError(Exception):
     """Raised when chunk-health validation fails in strict mode, or when an
@@ -109,10 +116,20 @@ def is_ignored_path(path):
 # --- Chunk-health visibility -------------------------------------------------
 
 def _strict_chunks_default():
-    """Strict mode: --strict-chunks on the command line, or FACTORIO_MCP_STRICT_CHUNKS env."""
-    if "--strict-chunks" in sys.argv:
+    """Strict: --strict-chunks, FACTORIO_MCP_STRICT_CHUNKS env, or a dry-run (the
+    measure-once gate must exit non-zero when the corpus isn't ready-to-cut)."""
+    if "--strict-chunks" in sys.argv or dry_run_requested():
         return True
     return os.getenv("FACTORIO_MCP_STRICT_CHUNKS", "").lower() in ("1", "true", "yes", "on")
+
+
+def dry_run_requested():
+    """Dry-run: chunk + audit the FULL corpus with NO embed/write (the measure-once
+    gate). Triggered by --dry-run on the command line or FACTORIO_MCP_DRY_RUN env.
+    Dry-run implies strict so an unhealthy corpus exits non-zero."""
+    return "--dry-run" in sys.argv or os.getenv("FACTORIO_MCP_DRY_RUN", "").lower() in (
+        "1", "true", "yes", "on"
+    )
 
 
 class ChunkAuditor:
@@ -127,43 +144,39 @@ class ChunkAuditor:
     ``ChunkHealthError`` on a FAIL so CI / opt-in runs fail loudly.
     """
 
-    CHARS_PER_TOKEN = 4  # rough proxy for the model's token cap -> a char threshold
-
-    def __init__(self, store, model=None, *, min_chars=10, max_chars=None,
+    def __init__(self, store, *, max_tokens=EMBED_MAX_TOKENS, min_chars=MIN_CHUNK_CHARS,
                  explosion_per_source=400, strict=None):
         self.store = store
+        self.max_tokens = max_tokens
         self.min_chars = min_chars
-        if max_chars is None:
-            max_seq = getattr(model, "max_seq_length", None) if model is not None else None
-            max_chars = (max_seq or 512) * self.CHARS_PER_TOKEN
-        self.max_chars = max_chars
         self.explosion_per_source = explosion_per_source
         self.strict = _strict_chunks_default() if strict is None else strict
         self.total = self.empty = self.tiny = self.oversized = 0
-        self._sizes = []
+        self.dups = self.decode_replacements = 0
+        self._tok_sizes = []
         self._by_type = {}
         self._per_source = {}
         self._oversized_examples = []
         self._empty_sources = []
 
     def add(self, embedded_text, *, source=None, node_type=None):
-        """Record one chunk, measured on the ACTUAL text that gets embedded."""
+        """Record one chunk, measured (in tokens) on the text that gets embedded."""
         text = embedded_text or ""
-        n = len(text)
+        tokens = count_tokens(text)
         self.total += 1
-        self._sizes.append(n)
+        self._tok_sizes.append(tokens)
         if node_type is not None:
             self._by_type[node_type] = self._by_type.get(node_type, 0) + 1
         if source is not None:
             self._per_source[source] = self._per_source.get(source, 0) + 1
         if not text.strip():
             self.empty += 1
-        elif n < self.min_chars:
+        elif len(text) < self.min_chars:
             self.tiny += 1
-        if n > self.max_chars:
+        if tokens > self.max_tokens:
             self.oversized += 1
             if len(self._oversized_examples) < 5:
-                self._oversized_examples.append((source, n))
+                self._oversized_examples.append((source, node_type, tokens))
 
     def add_batch(self, records, *, text_key, source_key=None, node_type_key="node_type"):
         for r in records:
@@ -178,9 +191,17 @@ class ChunkAuditor:
         if n_bytes > 0 and n_chunks == 0:
             self._empty_sources.append((source, n_bytes))
 
+    def note_dups(self, n):
+        """Record pure-duplicate chunks dropped during normalization."""
+        self.dups += n
+
+    def note_decode_replacements(self, n):
+        """Record files that needed UTF-8 replacement (possible binary/encoding issue)."""
+        self.decode_replacements += n
+
     def summary(self):
         """Print the health report; return a stats dict; raise in strict FAIL."""
-        sizes = self._sizes
+        sizes = self._tok_sizes
         median = int(statistics.median(sizes)) if sizes else 0
         explosions = sorted(
             ((s, c) for s, c in self._per_source.items() if c > self.explosion_per_source),
@@ -189,15 +210,19 @@ class ChunkAuditor:
 
         problems, warnings = [], []
         if self.oversized:
-            problems.append(f"{self.oversized} oversized (>{self.max_chars} chars -> silently truncated)")
+            problems.append(f"{self.oversized} oversized (>{self.max_tokens} tokens -> silently truncated)")
         if explosions:
             problems.append(f"{len(explosions)} source(s) exploded (>{self.explosion_per_source} chunks each)")
         if self._empty_sources:
             problems.append(f"{len(self._empty_sources)} non-empty source(s) produced 0 chunks")
+        if self.dups:
+            warnings.append(f"{self.dups} pure-duplicate(s) dropped")
         if self.empty:
             warnings.append(f"{self.empty} empty")
         if self.tiny:
             warnings.append(f"{self.tiny} tiny (<{self.min_chars} chars)")
+        if self.decode_replacements:
+            warnings.append(f"{self.decode_replacements} file(s) needed utf-8 replacement")
 
         result = "FAIL" if problems else ("WARN" if warnings else "PASS")
 
@@ -205,7 +230,7 @@ class ChunkAuditor:
         safe_print(f"=== Chunk health: {self.store} ===")
         safe_print(
             f"chunks: {self.total} | sources: {len(self._per_source)} | "
-            f"size chars min/median/max: "
+            f"tokens min/median/max: "
             f"{min(sizes) if sizes else 0}/{median}/{max(sizes) if sizes else 0}"
         )
         if self._by_type:
@@ -217,8 +242,8 @@ class ChunkAuditor:
             safe_print(f"  FAIL: {p}")
         for s, c in explosions[:5]:
             safe_print(f"    explosion: {s} = {c} chunks")
-        for s, n in self._oversized_examples:
-            safe_print(f"    oversized: {s} = {n} chars")
+        for s, nt, tok in self._oversized_examples:
+            safe_print(f"    oversized: {s} ({nt}) = {tok} tokens")
         for s, n in self._empty_sources[:5]:
             safe_print(f"    zero-chunk: {s} ({n} bytes)")
         safe_print(f"RESULT: {result}  (strict={'on' if self.strict else 'off'})")
@@ -226,9 +251,10 @@ class ChunkAuditor:
         stats = {
             "store": self.store, "total": self.total, "result": result,
             "empty": self.empty, "tiny": self.tiny, "oversized": self.oversized,
+            "dups": self.dups, "decode_replacements": self.decode_replacements,
             "explosions": explosions, "by_type": dict(self._by_type),
             "empty_sources": list(self._empty_sources),
-            "sizes": {
+            "tokens": {
                 "min": min(sizes) if sizes else 0, "median": median,
                 "max": max(sizes) if sizes else 0,
             },
@@ -267,6 +293,26 @@ def embed(texts, model=None):
             "the embedding model is misconfigured (every store must share 768-dim vectors)."
         )
     return vectors
+
+
+_TOKENIZER = None
+
+
+def count_tokens(text):
+    """Number of tokens for ``text`` via the embedder's real tokenizer (cached).
+
+    Lazy-loads only the tokenizer (~MBs), never the 200MB model. This is the unit
+    of truth for chunk sizing — a character proxy under-counts code (which
+    tokenizes far denser than prose) and would let truncated chunks pass. Tests
+    monkeypatch this to stay offline.
+    """
+    global _TOKENIZER
+    if _TOKENIZER is None:
+        from transformers import AutoTokenizer
+
+        model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
+        _TOKENIZER = AutoTokenizer.from_pretrained(model_name)
+    return len(_TOKENIZER.encode(text or "", add_special_tokens=False))
 
 
 def _schema_columns(schema):
@@ -355,13 +401,109 @@ def _preceding_comments(node):
     return "\n".join(comments)
 
 
-def extract_ast_chunks(src_bytes, kind, include_comments=False):
-    """Parse ``src_bytes`` (``bytes``) with the grammar for ``kind`` and return a
-    list of ``{'node_name','node_type','content'}`` per captured declaration.
+def _norm(text):
+    """Whitespace-normalized form, for exact-duplicate detection."""
+    return " ".join(text.split())
 
-    Returns ``None`` when tree-sitter is unavailable or ``kind`` is unsupported
-    (so the caller falls back to text chunking); ``[]`` when the file parsed but
-    matched no declarations.
+
+def _hard_split(text, max_tokens):
+    """Last resort for an unbreakable run (e.g. a minified single line): split by
+    characters into pieces each <= ``max_tokens``. Splitting mid-token is accepted
+    here only because the alternative is silent truncation by the embedder."""
+    pieces, i = [], 0
+    approx = max(1, max_tokens * 3)  # conservative chars/token for dense code
+    while i < len(text):
+        piece = text[i:i + approx]
+        while count_tokens(piece) > max_tokens and len(piece) > 1:
+            piece = piece[: max(1, int(len(piece) * 0.8))]
+        pieces.append(piece)
+        i += len(piece)
+    return pieces
+
+
+def _line_windows(text, max_tokens, overlap_frac=0.1):
+    """Split ``text`` into windows each <= ``max_tokens``, preferring line
+    boundaries with ~``overlap_frac`` overlap; a single line over budget is
+    hard-split by characters (last resort) so no window ever exceeds the cap."""
+    lines = text.split("\n")
+    counts = [count_tokens(ln) + 1 for ln in lines]  # +1 approximates the newline
+    windows, i, n = [], 0, len(lines)
+    while i < n:
+        j, total = i, 0
+        while j < n and (j == i or total + counts[j] <= max_tokens):
+            total += counts[j]
+            j += 1
+        window = "\n".join(lines[i:j]).strip()
+        if window:
+            if count_tokens(window) > max_tokens:
+                windows.extend(_hard_split(window, max_tokens))
+            else:
+                windows.append(window)
+        if j >= n:
+            break
+        i = max(i + 1, j - int((j - i) * overlap_frac))
+    return windows
+
+
+def _emit(out, seen, name, ntype, text):
+    """Append a chunk, skipping empties and exact (normalized) duplicates."""
+    text = text.strip()
+    if not text:
+        return
+    key = _norm(text)
+    if key in seen:
+        return
+    seen.add(key)
+    out.append({"node_name": name, "node_type": ntype, "content": text})
+
+
+def _split_node(node, name, ntype, max_tokens, out, seen):
+    """Emit ``node`` as one chunk if it fits, else split recursively by child
+    nodes (cAST), falling to a line-window only at a leaf."""
+    text = node.text.decode("utf-8", "replace")
+    if count_tokens(text) <= max_tokens:
+        _emit(out, seen, name, ntype, text)
+        return
+    named = [c for c in node.children if c.is_named]
+    if len(named) <= 1:
+        for w in _line_windows(text, max_tokens):
+            _emit(out, seen, name, ntype, w)
+        return
+    group = []
+
+    def flush():
+        if not group:
+            return
+        gtext = "\n".join(c.text.decode("utf-8", "replace") for c in group)
+        if count_tokens(gtext) <= max_tokens:
+            _emit(out, seen, name, ntype, gtext)
+        else:
+            for w in _line_windows(gtext, max_tokens):
+                _emit(out, seen, name, ntype, w)
+        group.clear()
+
+    for c in named:
+        ctext = c.text.decode("utf-8", "replace")
+        if count_tokens(ctext) > max_tokens:
+            flush()
+            _split_node(c, name, ntype, max_tokens, out, seen)
+        else:
+            trial = "\n".join(x.text.decode("utf-8", "replace") for x in group) + "\n" + ctext
+            if group and count_tokens(trial) > max_tokens:
+                flush()
+            group.append(c)
+    flush()
+
+
+def extract_ast_chunks(src_bytes, kind, include_comments=False, max_tokens=CONTENT_MAX_TOKENS):
+    """Parse ``src_bytes`` and return ``{'node_name','node_type','content'}`` chunks.
+
+    Captures only TOP-LEVEL declarations (no captured ancestor), so a nested node
+    is never stored both standalone and inside its parent (the duplication that
+    exploded factorio-data). A top-level node over ``max_tokens`` is split
+    recursively by its child nodes (a big class at its methods, a big
+    ``data:extend{...}`` per entry), down to a line-window only at a leaf. Returns
+    ``None`` when tree-sitter/kind is unavailable (caller falls back to text).
     """
     lq = _lang_and_query(kind)
     if lq is None:
@@ -370,22 +512,74 @@ def extract_ast_chunks(src_bytes, kind, include_comments=False):
     tree = Parser(lang).parse(src_bytes)
     captures = QueryCursor(query).captures(tree.root_node)
 
-    chunks = []
-    for capture_name, nodes in captures.items():
-        for node in nodes:
-            code = node.text.decode("utf-8", "replace")
-            if include_comments:
-                comments = _preceding_comments(node)
-                if comments:
-                    code = f"{comments}\n{code}"
-            chunks.append(
-                {
-                    "node_name": _node_name(node),
-                    "node_type": capture_name,
-                    "content": code,
-                }
-            )
-    return chunks
+    cap_name = {}
+    for nm, nodes in captures.items():
+        for nd in nodes:
+            cap_name[nd.id] = nm
+    captured_ids = set(cap_name)
+
+    def has_captured_ancestor(node):
+        p = node.parent
+        while p is not None:
+            if p.id in captured_ids:
+                return True
+            p = p.parent
+        return False
+
+    tops = sorted(
+        (nd for nodes in captures.values() for nd in nodes if not has_captured_ancestor(nd)),
+        key=lambda n: n.start_byte,
+    )
+
+    out, seen = [], set()
+    for node in tops:
+        name = _node_name(node)
+        ntype = cap_name.get(node.id, "node")
+        if include_comments:
+            comments = _preceding_comments(node)
+            if comments:
+                combined = f"{comments}\n{node.text.decode('utf-8', 'replace')}"
+                if count_tokens(combined) <= max_tokens:
+                    _emit(out, seen, name, ntype, combined)
+                    continue
+        _split_node(node, name, ntype, max_tokens, out, seen)
+    return out
+
+
+def normalize_chunks(chunks, *, content_key="content", max_tokens=CONTENT_MAX_TOKENS,
+                     min_chars=MIN_CHUNK_CHARS, dedup=True):
+    """Enforce chunk-health invariants on a list of chunk dicts and report what was
+    dropped. Drops chunks whose stripped content < ``min_chars``, token-splits any
+    chunk over ``max_tokens`` into line-windows, and (when ``dedup``) drops exact
+    duplicate content within the batch. The text lives under ``content_key``.
+
+    ``dedup=False`` is for stores where identical text is legitimately distinct
+    (e.g. factorio docs whose text repeats across versions, distinguished only by
+    metadata). Returns ``(normalized_chunks, {"dropped_tiny", "dropped_dup"})`` —
+    the universal guarantee every ingester applies before embedding.
+    """
+    out, seen = [], set()
+    dropped_tiny = dropped_dup = 0
+    for ch in chunks:
+        text = (ch.get(content_key) or "")
+        if len(text.strip()) < min_chars:
+            dropped_tiny += 1
+            continue
+        pieces = [text] if count_tokens(text) <= max_tokens else _line_windows(text, max_tokens)
+        for piece in pieces:
+            if len(piece.strip()) < min_chars:
+                dropped_tiny += 1
+                continue
+            if dedup:
+                key = _norm(piece)
+                if key in seen:
+                    dropped_dup += 1
+                    continue
+                seen.add(key)
+            new_chunk = dict(ch)
+            new_chunk[content_key] = piece
+            out.append(new_chunk)
+    return out, {"dropped_tiny": dropped_tiny, "dropped_dup": dropped_dup}
 
 
 def text_chunks_by_char(content, chunk_size=1500, overlap=200):

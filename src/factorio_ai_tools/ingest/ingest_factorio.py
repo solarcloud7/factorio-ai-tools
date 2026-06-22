@@ -206,8 +206,13 @@ def parse_prototype_api(data, version_name, source_url, content_hash):
 
 
 def main():
-    db, db_path = common.connect_store("factorio_lancedb")
-    table = common.ensure_table(db, "docs", FactorioDoc)
+    dry = common.dry_run_requested()
+    if dry:
+        common.safe_print("DRY RUN: chunk + audit only, no embed/write.")
+        db = db_path = table = None
+    else:
+        db, db_path = common.connect_store("factorio_lancedb")
+        table = common.ensure_table(db, "docs", FactorioDoc)
 
     all_chunks = []
     for ver in VERSIONS_TO_SCRAPE:
@@ -223,7 +228,7 @@ def main():
 
             chash = common.get_hash(resp.text)
 
-            if len(table) > 0:
+            if table is not None and len(table) > 0:
                 existing = table.search().where(f"source_url = '{url}'").limit(1).to_list()
                 if existing and existing[0].get('content_hash') == chash:
                     common.safe_print(f"Skipping {url}, content unchanged.")
@@ -234,10 +239,16 @@ def main():
 
     common.safe_print(f"\nExtracted {len(all_chunks)} new chunks total.")
 
+    # dedup=False: the same doc text recurs across versions (1.1.110 vs latest),
+    # distinguished only by the version/url metadata — those are NOT duplicates.
+    all_chunks, nstats = common.normalize_chunks(all_chunks, content_key="text", dedup=False)
     auditor = common.ChunkAuditor("factorio_lancedb")
+    auditor.note_dups(nstats["dropped_dup"])
     auditor.add_batch(all_chunks, text_key="text", source_key="source_url")
     auditor.summary()
 
+    if dry:
+        return
     if len(all_chunks) == 0:
         common.safe_print("Nothing new to ingest.")
         _write_version(db_path)
