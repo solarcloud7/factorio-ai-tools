@@ -146,6 +146,10 @@ def main():
 
             file_chunks, nstats = common.normalize_chunks(chunk_file(src_bytes, ext))
             auditor.note_dups(nstats["dropped_dup"])
+            if len(file_chunks) > common.MAX_CHUNKS_PER_FILE:
+                common.safe_print(f"Skipping bulk file {rel_path} ({len(file_chunks)} chunks).")
+                auditor.note_skipped_file(rel_path, len(file_chunks))
+                continue
             auditor.note_source(rel_path, len(src_bytes), len(file_chunks))
             for chunk in file_chunks:
                 context_text = (f"File: {rel_path}\nComponent: {chunk['node_name']}\n"

@@ -101,6 +101,10 @@ def main():
                 file_chunks = extract_text_chunks(rel_path, content_bytes.decode('utf8'), f_hash)
             except UnicodeDecodeError:
                 file_chunks = []
+        if len(file_chunks) > common.MAX_CHUNKS_PER_FILE:
+            common.safe_print(f"Skipping bulk file {rel_path} ({len(file_chunks)} chunks).")
+            auditor.note_skipped_file(rel_path, len(file_chunks))
+            continue
         auditor.note_source(rel_path, len(content_bytes), len(file_chunks))
         all_chunks.extend(file_chunks)
 

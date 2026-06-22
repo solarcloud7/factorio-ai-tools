@@ -39,6 +39,8 @@ EMBEDDING_DIM = 768
 EMBED_MAX_TOKENS = 512        # auditor cap on the full embedded text (incl. context prefix)
 CONTENT_MAX_TOKENS = 400      # cap on a chunk's raw content; leaves headroom for the prefix
 MIN_CHUNK_CHARS = 10          # drop a chunk whose stripped raw content is shorter than this
+MAX_CHUNKS_PER_FILE = 400     # a single file producing more is bulk data (e.g. a serialized
+                              # blueprint or changelog) and is skipped with a visible warning
 
 
 class ChunkHealthError(Exception):
@@ -155,7 +157,8 @@ class ChunkAuditor:
         self.explosion_per_source = explosion_per_source
         self.strict = _strict_chunks_default() if strict is None else strict
         self.total = self.empty = self.tiny = self.oversized = 0
-        self.dups = self.decode_replacements = 0
+        self.dups = self.decode_replacements = self.skipped_large = 0
+        self._skipped_examples = []
         self._tok_sizes = []
         self._by_type = {}
         self._per_source = {}
@@ -202,6 +205,12 @@ class ChunkAuditor:
         """Record files that needed UTF-8 replacement (possible binary/encoding issue)."""
         self.decode_replacements += n
 
+    def note_skipped_file(self, source, n_chunks):
+        """Record a bulk file skipped for exceeding the per-file chunk cap."""
+        self.skipped_large += 1
+        if len(self._skipped_examples) < 5:
+            self._skipped_examples.append((source, n_chunks))
+
     def summary(self):
         """Print the health report; return a stats dict; raise in strict FAIL."""
         sizes = self._tok_sizes
@@ -226,6 +235,8 @@ class ChunkAuditor:
             warnings.append(f"{self.tiny} tiny (<{self.min_chars} chars)")
         if self.decode_replacements:
             warnings.append(f"{self.decode_replacements} file(s) needed utf-8 replacement")
+        if self.skipped_large:
+            warnings.append(f"{self.skipped_large} bulk file(s) skipped (> {MAX_CHUNKS_PER_FILE} chunks)")
 
         result = "FAIL" if problems else ("WARN" if warnings else "PASS")
 
@@ -249,12 +260,15 @@ class ChunkAuditor:
             safe_print(f"    oversized: {s} ({nt}) = {tok} tokens")
         for s, n in self._empty_sources[:5]:
             safe_print(f"    zero-chunk: {s} ({n} bytes)")
+        for s, n in self._skipped_examples:
+            safe_print(f"    skipped-bulk: {s} ({n} chunks)")
         safe_print(f"RESULT: {result}  (strict={'on' if self.strict else 'off'})")
 
         stats = {
             "store": self.store, "total": self.total, "result": result,
             "empty": self.empty, "tiny": self.tiny, "oversized": self.oversized,
             "dups": self.dups, "decode_replacements": self.decode_replacements,
+            "skipped_large": self.skipped_large,
             "explosions": explosions, "by_type": dict(self._by_type),
             "empty_sources": list(self._empty_sources),
             "tokens": {
