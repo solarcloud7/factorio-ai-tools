@@ -18,6 +18,8 @@ silently:
 
 import hashlib
 import os
+import shutil
+import stat
 
 import torch
 from sentence_transformers import SentenceTransformer
@@ -61,6 +63,43 @@ def get_hash(data):
     if isinstance(data, str):
         data = data.encode("utf-8")
     return hashlib.sha256(data).hexdigest()
+
+
+def rmtree_force(path):
+    """``shutil.rmtree`` that survives read-only files (e.g. Windows git pack
+    files under ``.git/objects/pack``, which otherwise raise PermissionError)."""
+    if not os.path.exists(path):
+        return
+
+    def _retry(func, p, _exc):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+
+    try:
+        shutil.rmtree(path, onexc=_retry)        # Python 3.12+
+    except TypeError:
+        shutil.rmtree(path, onerror=_retry)      # Python 3.11
+
+
+# Directories never worth ingesting: dependencies, build output, VCS, caches.
+IGNORED_DIRS = {
+    ".git", "node_modules", "dist", "build", "out", "target",
+    "__pycache__", "venv", ".venv", ".yarn", ".next", ".cache", "coverage",
+}
+
+# Generated dependency lockfiles: large, churny, no semantic value.
+IGNORED_FILENAMES = {
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "npm-shrinkwrap.json",
+    "Cargo.lock", "poetry.lock", "uv.lock", "Gemfile.lock", "composer.lock",
+}
+
+
+def is_ignored_path(path):
+    """True if any path segment is an ignored dir or the basename is a lockfile."""
+    parts = path.replace("\\", "/").split("/")
+    return bool(parts) and (
+        any(seg in IGNORED_DIRS for seg in parts) or parts[-1] in IGNORED_FILENAMES
+    )
 
 
 _MODEL = None

@@ -10,7 +10,6 @@ files are deleted-then-re-added (so re-running no longer duplicates rows).
 
 import argparse
 import os
-import shutil
 import subprocess
 import sys
 
@@ -28,7 +27,6 @@ SCHEMA = pa.schema([
     pa.field("content_hash", pa.string()),
 ])
 
-IGNORED_DIRS = {".git", "node_modules", "dist", "build", "__pycache__", "venv", ".venv", "out", "target"}
 SUPPORTED_EXTS = {
     ".ts", ".js", ".tsx", ".jsx", ".json", ".yaml", ".yml",
     ".py", ".sh", ".bash", ".lua", ".md", ".txt", ".toml",
@@ -71,7 +69,7 @@ def main():
         target_dir = os.path.join(common.REPO_ROOT, ".mod_temp", repo_name)
         if os.path.exists(target_dir):
             common.safe_print(f"Removing existing temp dir: {target_dir}")
-            shutil.rmtree(target_dir)
+            common.rmtree_force(target_dir)
         common.safe_print(f"Cloning {args.repo_url} into {target_dir}...")
         os.makedirs(os.path.join(common.REPO_ROOT, ".mod_temp"), exist_ok=True)
         subprocess.run(["git", "clone", "--depth", "1", args.repo_url, target_dir], check=True)
@@ -113,9 +111,11 @@ def main():
         batch = []
 
     for root, dirs, files in os.walk(target_dir):
-        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS and not d.startswith(".")]
+        dirs[:] = [d for d in dirs if d not in common.IGNORED_DIRS and not d.startswith(".")]
 
         for file in files:
+            if file in common.IGNORED_FILENAMES:
+                continue
             ext = os.path.splitext(file)[1].lower()
             if ext not in SUPPORTED_EXTS and "dockerfile" not in file.lower():
                 continue

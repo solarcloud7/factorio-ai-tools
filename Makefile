@@ -32,11 +32,13 @@ ingest-clusterio:
 	$(PY) -m factorio_ai_tools.ingest.ingest_clusterio
 
 # Generic GitHub repos -> the shared repo_lancedb store (incremental).
+# factorio-data: vanilla prototype definitions; draftsman/blueprint-editor:
+# blueprint tooling; maraxsis: a worked-example Lua mod.
 ingest-repos:
-	$(PY) -m factorio_ai_tools.ingest.ingest_github_repo --repo-url https://github.com/clusterio/clusterio-docker.git
 	$(PY) -m factorio_ai_tools.ingest.ingest_github_repo --repo-url https://github.com/wube/factorio-data.git
 	$(PY) -m factorio_ai_tools.ingest.ingest_github_repo --repo-url https://github.com/redruin1/factorio-draftsman.git
 	$(PY) -m factorio_ai_tools.ingest.ingest_github_repo --repo-url https://github.com/Teoxoy/factorio-blueprint-editor.git
+	$(PY) -m factorio_ai_tools.ingest.ingest_github_repo --repo-url https://github.com/notnotmelon/maraxsis.git
 
 ingest-all: ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos
 

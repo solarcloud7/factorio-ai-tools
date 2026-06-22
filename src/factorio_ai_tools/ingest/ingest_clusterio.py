@@ -61,7 +61,7 @@ def main():
     all_files = []
     for ext in EXTENSIONS:
         for f in glob.glob(f"{repo_path}/**/{ext}", recursive=True):
-            if "node_modules" not in f and ".git" not in f:
+            if not common.is_ignored_path(f):
                 all_files.append(f)
     common.safe_print(f"Found {len(all_files)} total files.")
 
@@ -80,7 +80,10 @@ def main():
         except OSError:
             continue
 
-        safe_f = f.replace("'", "''")
+        # Store a clean repo-relative path (e.g. plugins/player_auth/..., not
+        # ./clusterio\plugins\...) so results read well and per-plugin filtering works.
+        rel_path = os.path.relpath(f, repo_path).replace(os.sep, "/")
+        safe_f = rel_path.replace("'", "''")
         if len(table) > 0:
             existing = table.search().where(f"file_path = '{safe_f}'").limit(1).to_list()
             if existing and existing[0].get('content_hash') == f_hash:
@@ -89,11 +92,11 @@ def main():
             table.delete(f"file_path = '{safe_f}'")
 
         if f.endswith('.ts') or f.endswith('.js'):
-            all_chunks.extend(extract_chunks(f, content_bytes, f_hash))
+            all_chunks.extend(extract_chunks(rel_path, content_bytes, f_hash))
         else:
             try:
                 text_content = content_bytes.decode('utf8')
-                all_chunks.extend(extract_text_chunks(f, text_content, f_hash))
+                all_chunks.extend(extract_text_chunks(rel_path, text_content, f_hash))
             except UnicodeDecodeError:
                 pass
 

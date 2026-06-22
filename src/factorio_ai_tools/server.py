@@ -226,13 +226,14 @@ def search_factorio_docs(queries: list[str], class_filter: str = None, limit: in
         return f"Error executing search: {str(e)}"
 
 @optional_tool()
-def search_clusterio_code(queries: list[str], node_type: str = None, limit: int = 5) -> str:
+def search_clusterio_code(queries: list[str], node_type: str = None, plugin: str = None, limit: int = 5) -> str:
     """
     Search the Clusterio TypeScript codebase using semantic AST-chunked RAG.
-    
+
     Args:
         queries: A list of semantic search queries to batch process.
-        node_type: Optional AST node type filter ('class_declaration', 'function_declaration', 'method_definition', 'interface_declaration', 'text_file').
+        node_type: Optional AST node-type filter ('class', 'interface', 'function', 'method', 'text_file').
+        plugin: Optional plugin/package name to scope the search to one component, matched against the file path (e.g. 'subspace_storage', 'player_auth', 'inventory_sync', 'controller').
         limit: Maximum number of chunks to return per query (default 5, max 20).
     """
     if table_clusterio is None:
@@ -251,11 +252,17 @@ def search_clusterio_code(queries: list[str], node_type: str = None, limit: int 
         
         for idx, query_vec in enumerate(query_vecs):
             q = table_clusterio.search(query_vec.tolist())
-            
+
+            conditions = []
             if node_type:
                 safe_node = node_type.replace("'", "''")
-                q = q.where(f"node_type = '{safe_node}'")
-                
+                conditions.append(f"node_type = '{safe_node}'")
+            if plugin:
+                safe_plugin = plugin.replace("'", "''")
+                conditions.append(f"file_path LIKE '%{safe_plugin}%'")
+            if conditions:
+                q = q.where(" AND ".join(conditions))
+
             results = q.limit(limit).to_list()
             
             all_formatted_chunks.append(f"### Results for query: '{queries[idx]}'")
