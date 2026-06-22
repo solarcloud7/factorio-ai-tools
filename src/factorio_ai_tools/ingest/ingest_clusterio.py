@@ -29,17 +29,14 @@ class CodeChunk(LanceModel):
 
 
 def extract_chunks(file_path, src_bytes, content_hash):
-    """AST chunks (with comments) for a .ts/.js file."""
-    chunks = []
-    for c in (common.extract_ast_chunks(src_bytes, "typescript", include_comments=True) or []):
-        chunks.append({
-            "file_path": file_path,
-            "node_type": c["node_type"],
-            "node_name": c["node_name"],
-            "content": c["content"],
-            "content_hash": content_hash,
-        })
-    return chunks
+    """AST chunks (with comments) for a .ts/.js file; coverage-fallback to text."""
+    return [{
+        "file_path": file_path,
+        "node_type": c["node_type"],
+        "node_name": c["node_name"],
+        "content": c["content"],
+        "content_hash": content_hash,
+    } for c in common.chunk_code(src_bytes, "typescript", include_comments=True)]
 
 
 def extract_text_chunks(file_path, content, content_hash):

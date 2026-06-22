@@ -98,10 +98,13 @@ IGNORED_DIRS = {
     "__pycache__", "venv", ".venv", ".yarn", ".next", ".cache", "coverage",
 }
 
-# Generated dependency lockfiles: large, churny, no semantic value.
+# Generated dependency lockfiles + bulky low-value files: large, churny, no
+# semantic value for retrieval. (Factorio's changelog.txt alone text-chunks into
+# ~1840 windows that drown the store.)
 IGNORED_FILENAMES = {
     "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "npm-shrinkwrap.json",
     "Cargo.lock", "poetry.lock", "uv.lock", "Gemfile.lock", "composer.lock",
+    "changelog.txt", "changelog-last.txt",
 }
 
 
@@ -363,6 +366,7 @@ _TS_QUERY = """
 """
 _LUA_QUERY = """
 (function_declaration) @function
+(function_definition) @function
 (table_constructor) @table
 """
 
@@ -544,6 +548,25 @@ def extract_ast_chunks(src_bytes, kind, include_comments=False, max_tokens=CONTE
                     continue
         _split_node(node, name, ntype, max_tokens, out, seen)
     return out
+
+
+def chunk_code(src_bytes, kind, include_comments=False, max_tokens=CONTENT_MAX_TOKENS):
+    """AST chunks for a code file, with a coverage-based fallback to text-line
+    chunks. Falls back when the AST is unavailable/empty OR covers less than half
+    the file's non-whitespace bytes — so content the grammar's captures miss
+    (functions assigned to locals, arrow functions, ``require`` lists, etc.) is
+    never silently dropped. Returns ``[{'node_name','node_type','content'}]``."""
+    ast = (
+        extract_ast_chunks(src_bytes, kind, include_comments=include_comments, max_tokens=max_tokens)
+        if kind else None
+    )
+    code = src_bytes.decode("utf-8", "replace")
+    if ast:
+        body = len(code.strip())
+        covered = sum(len(c["content"]) for c in ast)
+        if body == 0 or covered >= 0.5 * body:
+            return ast
+    return text_chunks_by_line(code)
 
 
 def normalize_chunks(chunks, *, content_key="content", max_tokens=CONTENT_MAX_TOKENS,

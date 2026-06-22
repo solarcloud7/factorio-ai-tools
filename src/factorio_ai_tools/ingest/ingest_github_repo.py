@@ -38,20 +38,11 @@ def chunk_file(src_bytes, ext):
     """Return [{'node_name','node_type','content'}] for a file's bytes.
 
     .ts/.tsx -> TypeScript AST; .lua -> Lua AST; anything else (incl. .js/.jsx)
-    -> line-window text chunks. Falls back to text chunks when the AST yields
-    nothing (e.g. a grammar that can't parse the dialect).
+    -> line-window text. ``common.chunk_code`` also falls back to text when the
+    AST covers too little of the file, so nothing is silently dropped.
     """
-    kind = None
-    if ext in (".ts", ".tsx"):
-        kind = "typescript"
-    elif ext == ".lua":
-        kind = "lua"
-
-    chunks = common.extract_ast_chunks(src_bytes, kind) if kind else None
-    if not chunks:  # None (unsupported/unavailable) or [] (no declarations found)
-        code = src_bytes.decode("utf-8", "replace")
-        chunks = common.text_chunks_by_line(code)
-    return chunks
+    kind = "typescript" if ext in (".ts", ".tsx") else ("lua" if ext == ".lua" else None)
+    return common.chunk_code(src_bytes, kind)
 
 
 def main():
