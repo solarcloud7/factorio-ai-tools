@@ -14,5 +14,8 @@ dist/
 data/
 .venv/
 
+# Clusterio checkout cloned by `make ingest-clusterio` (default CLUSTERIO_REPO)
+/clusterio/
+
 # Build/deploy artifact produced by `make package-dbs` / `make deploy-dbs`
 factorio_lancedb.zip

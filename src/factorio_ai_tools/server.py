@@ -54,10 +54,15 @@ if os.path.exists(LOCAL_DATA_DIR) or os.getenv("FACTORIO_MCP_LOCAL_MODE"):
 else:
     DATA_DIR = USER_DATA_DIR
 
+# The release asset (factorio_lancedb.zip) bundles all of these; the bootstrap
+# only short-circuits when every one is already present, so a partial extract
+# (e.g. repo_lancedb alone) still triggers a re-download.
+ALL_STORES = ["factorio_lancedb", "clusterio_lancedb", "wiki_lancedb", "forum_lancedb", "repo_lancedb"]
+
 def ensure_databases():
-    if os.path.exists(os.path.join(DATA_DIR, "repo_lancedb")):
+    if all(os.path.exists(os.path.join(DATA_DIR, s)) for s in ALL_STORES):
         return
-        
+
     os.makedirs(DATA_DIR, exist_ok=True)
     print(f"Databases not found locally. Downloading to {DATA_DIR}...", file=sys.stderr)
     url = "https://github.com/solarcloud7/factorio-ai-tools/releases/latest/download/factorio_lancedb.zip"
