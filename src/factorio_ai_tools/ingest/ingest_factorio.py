@@ -242,7 +242,9 @@ def main():
     # dedup=False: the same doc text recurs across versions (1.1.110 vs latest),
     # distinguished only by the version/url metadata — those are NOT duplicates.
     all_chunks, nstats = common.normalize_chunks(all_chunks, content_key="text", dedup=False)
-    auditor = common.ChunkAuditor("factorio_lancedb")
+    # explosion_per_source=None: a single API endpoint legitimately yields thousands
+    # of distinct, token-capped doc chunks (one per class/method/prototype/type).
+    auditor = common.ChunkAuditor("factorio_lancedb", explosion_per_source=None)
     auditor.note_dups(nstats["dropped_dup"])
     auditor.add_batch(all_chunks, text_key="text", source_key="source_url")
     auditor.summary()

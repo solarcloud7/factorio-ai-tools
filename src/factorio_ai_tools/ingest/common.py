@@ -215,8 +215,12 @@ class ChunkAuditor:
         """Print the health report; return a stats dict; raise in strict FAIL."""
         sizes = self._tok_sizes
         median = int(statistics.median(sizes)) if sizes else 0
+        # explosion_per_source=None disables the check (for stores whose "source"
+        # is a whole API dump, e.g. factorio's runtime-api.json -> thousands of
+        # legitimate, distinct, token-capped doc chunks).
         explosions = sorted(
-            ((s, c) for s, c in self._per_source.items() if c > self.explosion_per_source),
+            ((s, c) for s, c in self._per_source.items()
+             if self.explosion_per_source is not None and c > self.explosion_per_source),
             key=lambda x: -x[1],
         )
 
