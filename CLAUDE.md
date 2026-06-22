@@ -63,7 +63,7 @@ To test a tool manually, import `factorio_ai_tools.server` in a REPL — the `@m
 
 **Server resilience.** `server.py` opens each table in its own try/except and sets the handle to `None` on failure, so a missing store degrades only the affected tool (which returns a "run ingest_X first" error) rather than crashing the server. Search tools accept a **list of queries** (batched encode) and clamp `limit` to 1–20.
 
-**Non-search tools** in `server.py` are self-contained (no DB): `decode_factorio_blueprint`/`encode_factorio_blueprint` (base64+zlib, version byte `0`, 10 MB decompress guard), `factorio_mod_portal_analyzer` (mods.factorio.com API), `factorio_log_inspector` (OS-aware path to `factorio-current.log`), `get_mcp_version_info` (reads the `factorio_lancedb` + `clusterio_lancedb` `version.txt` files).
+**Non-search tools** in `server.py` are self-contained (no DB): `decode_factorio_blueprint`/`encode_factorio_blueprint` (base64+zlib, version byte `0`, 10 MB decompress guard), `factorio_mod_portal_analyzer` (mods.factorio.com API), `get_mcp_version_info` (reads the `factorio_lancedb` + `clusterio_lancedb` `version.txt` files). There is also an `@mcp.prompt()`, `factorio_clusterio_expert`, that supplies the modding/Clusterio mental model. (A `factorio_log_inspector` tool existed historically but was deliberately removed in `82a5409`.)
 
 ## Conventions (from `.agents/AGENTS.md`)
 
