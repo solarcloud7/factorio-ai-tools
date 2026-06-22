@@ -11,12 +11,13 @@ A lightning-fast, hybrid-search Vector Database and Model Context Protocol (MCP)
 
 ## Architecture
 
-This project consists of 4 main components:
-1. **Factorio Docs Ingestion (`ingest_factorio.py`)**: Scrapes the official Lua API documentation and Data Phase Prototypes across multiple versions (e.g. `1.1.110` and `latest`).
-2. **Clusterio Codebase Ingestion (`ingest_clusterio.py`)**: Uses AST (Abstract Syntax Tree) parsing to semantically chunk the massive Node.js/TypeScript Clusterio plugin architecture.
-3. **Factorio Wiki Ingestion (`ingest_wiki.py`)**: Scrapes the official Factorio Wiki via the MediaWiki API, exclusively extracting English wikitext for gameplay mechanics, ratios, and formulas.
-4. **GitHub Mod Ingestion (`ingest_github_mod.py`)**: A generalized pipeline that clones, AST-parses (via `tree-sitter-lua`), and incrementally hashes any GitHub Mod codebase (e.g., Maraxsis) into a semantic `mod_lancedb` index.
-5. **FastMCP Server (`server.py`)**: The bridge that connects the underlying LanceDB vector databases to an LLM via the standard Model Context Protocol.
+This project consists of five ingestion pipelines (sharing `ingest/common.py` for the embedding, hashing, and tree-sitter contract) feeding five LanceDB vector stores, plus the MCP server:
+1. **Factorio Docs (`ingest_factorio.py` → `factorio_lancedb`)**: Scrapes the official Lua API documentation and Data Phase Prototypes across multiple versions (`1.1.110` and `latest`).
+2. **Factorio Wiki (`ingest_wiki.py` → `wiki_lancedb`)**: Scrapes the Factorio Wiki via the MediaWiki API (English wikitext) for gameplay mechanics, ratios, and formulas.
+3. **Clusterio Codebase (`ingest_clusterio.py` → `clusterio_lancedb`)**: AST-parses the Node.js/TypeScript Clusterio plugin architecture (tree-sitter).
+4. **Factorio Forums (`ingest_forum.py` → `forum_lancedb`)**: Scrapes a curated list of forum topics (`forum_links.txt`) for community solutions and discussions.
+5. **Generic GitHub Repos (`ingest_github_repo.py` → `repo_lancedb`)**: Clones and AST-parses (tree-sitter TypeScript/JS + Lua) any GitHub repository — base game data, libraries, or any mod — into one shared, multi-repo index.
+6. **FastMCP Server (`server.py`)**: The bridge that connects the underlying LanceDB vector stores to an LLM via the standard Model Context Protocol.
 
 ## Setup & Usage
 
@@ -78,9 +79,9 @@ If you wish to run the python scripts manually or ingest custom codebases:
 1. Create a python virtual environment: `python -m venv venv` and activate it.
 2. Run `pip install -r requirements.txt`.
 3. *(Optional)* Run the ingestion scripts (`python -m factorio_ai_tools.ingest.ingest_factorio`, etc.) to rebuild the LanceDB tables.
-4. *(Optional)* Ingest a specific GitHub Mod:
+4. *(Optional)* Ingest a specific GitHub repo or mod into the shared `repo_lancedb` index:
    ```powershell
-   python -m factorio_ai_tools.ingest.ingest_github_mod --repo-url https://github.com/notnotmelon/maraxsis
+   python -m factorio_ai_tools.ingest.ingest_github_repo --repo-url https://github.com/notnotmelon/maraxsis
    ```
 
 ## Maintenance (Database Hygiene)
@@ -107,12 +108,22 @@ git config core.hooksPath maintenance/hooks
 
 ## Tools Included
 
-- `search_factorio_docs`: Look up Lua Runtime API methods, concepts, events, and Data Phase prototypes. Supports version filtering (`1.1.110` vs `latest`).
-- `search_clusterio_code`: Semantically search the Clusterio Node.js architecture.
-- `search_factorio_wiki`: Access game mechanics, ratios, and fluid mechanics straight from the Wiki.
-- `search_mod_code`: Semantically search through specific downloaded GitHub mods (e.g., `maraxsis`) to read their Lua codebase.
-- `decode_factorio_blueprint`: Convert Factorio blueprint strings (e.g. `0eNq...`) into easily readable/editable JSON.
-- `encode_factorio_blueprint`: Compress generated JSON back into an importable Factorio blueprint string.
-- `factorio_mod_portal_analyzer`: Scrape and summarize the Factorio Mod Portal for any given mod to retrieve dependencies and release versions.
+Every tool can be turned on/off individually via `--enable-tools` / `--disable-tools` (see [Selective Tool Loading](#selective-tool-loading-optional)). All search tools accept a **list of queries** in one call and clamp `limit` to 1–20.
 
-- `get_mcp_version_info`: Self-diagnostics tool to verify the currently loaded database versions.
+**Knowledge search** (one per vector store):
+- `search_factorio_docs`: Look up Lua Runtime API methods, concepts, and events plus Data Phase prototypes. Filter by `class_name` and `version` (`1.1.110` vs `latest`).
+- `search_factorio_wiki`: Game mechanics, ratios, fluid mechanics, and formulas straight from the Factorio Wiki.
+- `search_factorio_forums`: Curated Factorio forum topics — community solutions, edge cases, and discussions.
+- `search_clusterio_code`: Semantically search the Clusterio Node.js/TypeScript architecture. Filter by `node_type`.
+- `search_github_code`: Search any ingested GitHub repository (base game `factorio-data`, `factorio-draftsman`, the blueprint editor, Clusterio Docker, and **any mod you ingest** via `ingest_github_repo`). Filter by `repo_name`.
+
+**Blueprints:**
+- `decode_factorio_blueprint`: Convert a Factorio blueprint string (e.g. `0eNq...`) into readable/editable JSON.
+- `encode_factorio_blueprint`: Compress generated JSON back into an importable Factorio blueprint string.
+
+**Utilities:**
+- `factorio_mod_portal_analyzer`: Scrape and summarize a mod on the Factorio Mod Portal for its dependencies and release versions.
+- `get_mcp_version_info`: Self-diagnostics — report the currently loaded database versions.
+
+**Prompt:**
+- `factorio_clusterio_expert`: An MCP prompt (not a tool) that primes the model with the Factorio modding phases (settings → data → control) and the Clusterio plugin architecture, and tells it which search tool to reach for.
