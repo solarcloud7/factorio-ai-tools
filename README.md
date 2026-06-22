@@ -76,8 +76,8 @@ For example, to *only* load the doc search and the blueprint decoder using `uvx`
 
 ### Manual Developer Setup
 If you wish to run the python scripts manually or ingest custom codebases:
-1. Create a python virtual environment: `python -m venv venv` and activate it.
-2. Run `pip install -r requirements.txt`.
+1. **`make sync`** (uv-based, recommended) — installs all dependencies and **auto-selects the CUDA torch wheel when an NVIDIA GPU is present** (otherwise the CPU wheel), so ingestion embeds on the GPU. `pyproject.toml` keeps the CPU wheel as the default, so PyPI/Docker/CI stay lean; the GPU swap is local only and survives venv recreation (just re-run `make sync`). Or, without make: `uv sync` then, on a GPU box, `uv pip install --reinstall torch --index-url https://download.pytorch.org/whl/cu124`.
+   - *Legacy:* `python -m venv venv && pip install -r requirements.txt` (CPU only).
 3. *(Optional)* Run the ingestion scripts (`python -m factorio_ai_tools.ingest.ingest_factorio`, etc.) to rebuild the LanceDB tables.
 4. *(Optional)* Ingest a specific GitHub repo or mod into the shared `repo_lancedb` index:
    ```powershell

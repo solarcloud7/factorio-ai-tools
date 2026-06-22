@@ -1,4 +1,4 @@
-.PHONY: help compact ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos package-dbs deploy-dbs test mcp
+.PHONY: help sync compact ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos package-dbs deploy-dbs test mcp
 
 # Latest GitHub release tag; override with `make deploy-dbs TAG=vX.Y.Z`.
 TAG ?= $(shell gh release view --json tagName -q .tagName)
@@ -10,6 +10,7 @@ STORES = factorio_lancedb clusterio_lancedb wiki_lancedb forum_lancedb repo_lanc
 
 help:
 	@echo "Available commands:"
+	@echo "  make sync          - Install deps; auto-select CUDA torch if an NVIDIA GPU is present"
 	@echo "  make ingest-all    - (Re)build all 5 LanceDB stores (incremental/idempotent)"
 	@echo "  make compact       - Compact/finalize every data/*_lancedb store"
 	@echo "  make package-dbs   - Zip the 5 stores into factorio_lancedb.zip"
@@ -57,6 +58,16 @@ package-dbs:
 # upload to the latest GitHub release (data/ is gitignored, so this is local).
 deploy-dbs: compact package-dbs
 	gh release upload $(TAG) factorio_lancedb.zip --clobber
+
+# Sync deps, then auto-select torch by hardware: pyproject keeps the CPU wheel as
+# default (clean for PyPI/Docker/CI); on a box with an NVIDIA GPU this swaps in the
+# CUDA wheel so ingestion embeds on the GPU. Reproducible across venv recreation.
+# The leading '-' makes uv sync non-fatal: on Windows it can't refresh the
+# console-script .exe while an MCP server is running from this venv, but deps are
+# synced before that step, so we continue to the torch selection regardless.
+sync:
+	-uv sync --group dev
+	$(PY) -c "import shutil, subprocess; subprocess.run(['uv','pip','install','--reinstall','torch','--index-url','https://download.pytorch.org/whl/cu124'], check=True) if shutil.which('nvidia-smi') else print('No NVIDIA GPU detected -> keeping CPU torch.')"
 
 test:
 	$(PY) -m pytest -q
