@@ -28,6 +28,13 @@ dependencies = [
 [project.scripts]
 factorio-ai-tools = "factorio_ai_tools.server:main"
 
+[dependency-groups]
+dev = ["pytest>=8", "pytest-mock"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

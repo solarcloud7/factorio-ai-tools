@@ -70,6 +70,7 @@ def main():
     table = common.ensure_table(db, "codebase", CodeChunk)
 
     common.safe_print("Extracting chunks...")
+    auditor = common.ChunkAuditor("clusterio_lancedb")
     all_chunks = []
     skipped_count = 0
     for f in all_files:
@@ -92,16 +93,20 @@ def main():
             table.delete(f"file_path = '{safe_f}'")
 
         if f.endswith('.ts') or f.endswith('.js'):
-            all_chunks.extend(extract_chunks(rel_path, content_bytes, f_hash))
+            file_chunks = extract_chunks(rel_path, content_bytes, f_hash)
         else:
             try:
-                text_content = content_bytes.decode('utf8')
-                all_chunks.extend(extract_text_chunks(rel_path, text_content, f_hash))
+                file_chunks = extract_text_chunks(rel_path, content_bytes.decode('utf8'), f_hash)
             except UnicodeDecodeError:
-                pass
+                file_chunks = []
+        auditor.note_source(rel_path, len(content_bytes), len(file_chunks))
+        all_chunks.extend(file_chunks)
 
     common.safe_print(f"Skipped {skipped_count} unchanged files.")
     common.safe_print(f"Extracted {len(all_chunks)} new/modified chunks.")
+
+    auditor.add_batch(all_chunks, text_key="content", source_key="file_path")
+    auditor.summary()
 
     if len(all_chunks) == 0:
         common.safe_print("Database is perfectly up to date!")

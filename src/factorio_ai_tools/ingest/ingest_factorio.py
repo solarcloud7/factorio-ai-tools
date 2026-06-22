@@ -234,6 +234,10 @@ def main():
 
     common.safe_print(f"\nExtracted {len(all_chunks)} new chunks total.")
 
+    auditor = common.ChunkAuditor("factorio_lancedb")
+    auditor.add_batch(all_chunks, text_key="text", source_key="source_url")
+    auditor.summary()
+
     if len(all_chunks) == 0:
         common.safe_print("Nothing new to ingest.")
         _write_version(db_path)

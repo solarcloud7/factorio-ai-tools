@@ -1,4 +1,4 @@
-.PHONY: help compact ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos package-dbs deploy-dbs mcp
+.PHONY: help compact ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos package-dbs deploy-dbs test mcp
 
 # Latest GitHub release tag; override with `make deploy-dbs TAG=vX.Y.Z`.
 TAG ?= $(shell gh release view --json tagName -q .tagName)
@@ -14,6 +14,7 @@ help:
 	@echo "  make compact       - Compact/finalize every data/*_lancedb store"
 	@echo "  make package-dbs   - Zip the 5 stores into factorio_lancedb.zip"
 	@echo "  make deploy-dbs    - Compact, package, and upload the final build to the latest release"
+	@echo "  make test          - Run the offline test suite (chunk-health strict)"
 	@echo "  make mcp           - Start the MCP server"
 
 ingest-factorio:
@@ -56,6 +57,9 @@ package-dbs:
 # upload to the latest GitHub release (data/ is gitignored, so this is local).
 deploy-dbs: compact package-dbs
 	gh release upload $(TAG) factorio_lancedb.zip --clobber
+
+test:
+	$(PY) -m pytest -q
 
 mcp:
 	.\start_mcp_server.bat

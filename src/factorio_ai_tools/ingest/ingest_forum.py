@@ -66,6 +66,7 @@ def main():
     db, _db_path = common.connect_store("forum_lancedb")
     table = common.ensure_table(db, "forum", SCHEMA)
     model = common.load_embedder()
+    auditor = common.ChunkAuditor("forum_lancedb")
 
     common.safe_print(f"Reading curated links from {FORUM_LINKS_FILE}...")
     topic_urls = load_topic_urls()
@@ -89,8 +90,11 @@ def main():
                     continue
                 table.delete(f"file_path = '{safe_url}'")
 
-            for i, chunk in enumerate(chunk_text(content)):
+            topic_chunks = chunk_text(content)
+            auditor.note_source(url, len(content), len(topic_chunks))
+            for i, chunk in enumerate(topic_chunks):
                 chunk_content = f"Topic: {title}\n\n{chunk}"
+                auditor.add(chunk_content, source=url)
                 embedding = common.embed([chunk_content], model)[0].tolist()
                 records.append({
                     "id": f"forum_{topic_count}_{i}",
@@ -117,6 +121,7 @@ def main():
     if records:
         table.add(records)
 
+    auditor.summary()
     common.safe_print(f"Ingestion complete! Embedded {topic_count} topics into LanceDB.")
 
 

@@ -19,3 +19,6 @@ data/
 
 # Build/deploy artifact produced by `make package-dbs` / `make deploy-dbs`
 factorio_lancedb.zip
+
+# pytest
+.pytest_cache/

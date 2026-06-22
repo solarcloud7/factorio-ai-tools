@@ -58,6 +58,8 @@ def main():
     parser = argparse.ArgumentParser(description="Ingest a generic GitHub repository into the LanceDB pipeline.")
     parser.add_argument("--repo-url", type=str, help="GitHub URL to clone and ingest")
     parser.add_argument("--local-path", type=str, help="Local directory path to ingest")
+    parser.add_argument("--strict-chunks", action="store_true",
+                        help="Exit non-zero if chunk-health validation fails (else warn only).")
     args = parser.parse_args()
 
     if not args.repo_url and not args.local_path:
@@ -82,6 +84,7 @@ def main():
     db, _db_path = common.connect_store("repo_lancedb")
     table = common.ensure_table(db, "codebase", SCHEMA)
     model = common.load_embedder()
+    auditor = common.ChunkAuditor("repo_lancedb")
 
     safe_repo = repo_name.replace("'", "''")
     has_rows = len(table) > 0
@@ -95,6 +98,8 @@ def main():
         nonlocal batch, total_chunks
         if not batch:
             return
+        for b in batch:
+            auditor.add(b["text_to_embed"], source=b["file_path"], node_type=b["node_type"])
         vectors = common.embed([b["text_to_embed"] for b in batch], model)
         rows = [{
             "vector": vectors[i].tolist(),
@@ -140,7 +145,9 @@ def main():
                     continue
                 table.delete(where)
 
-            for chunk in chunk_file(src_bytes, ext):
+            file_chunks = chunk_file(src_bytes, ext)
+            auditor.note_source(rel_path, len(src_bytes), len(file_chunks))
+            for chunk in file_chunks:
                 context_text = (f"File: {rel_path}\nComponent: {chunk['node_name']}\n"
                                 f"Type: {chunk['node_type']}\nCode:\n{chunk['content']}")
                 batch.append({
@@ -156,6 +163,7 @@ def main():
                     flush()
 
     flush()
+    auditor.summary()
     common.safe_print(f"Skipped {skipped_files} unchanged files.")
     common.safe_print(f"\nDone! Ingested {total_chunks} total chunks for repository {repo_name}.")
 
