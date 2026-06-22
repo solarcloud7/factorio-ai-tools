@@ -13,3 +13,6 @@ dist/
 # Local Data
 data/
 .venv/
+
+# Build/deploy artifact produced by `make package-dbs` / `make deploy-dbs`
+factorio_lancedb.zip

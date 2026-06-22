@@ -55,7 +55,7 @@ else:
     DATA_DIR = USER_DATA_DIR
 
 def ensure_databases():
-    if os.path.exists(os.path.join(DATA_DIR, "factorio_lancedb")):
+    if os.path.exists(os.path.join(DATA_DIR, "repo_lancedb")):
         return
         
     os.makedirs(DATA_DIR, exist_ok=True)
