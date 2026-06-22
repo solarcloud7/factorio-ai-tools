@@ -333,6 +333,9 @@ def count_tokens(text):
 
         model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
         _TOKENIZER = AutoTokenizer.from_pretrained(model_name)
+        # We measure (then split) texts longer than 512; raise the limit so the
+        # tokenizer doesn't log a "longer than max" warning for every measurement.
+        _TOKENIZER.model_max_length = 10 ** 9
     return len(_TOKENIZER.encode(text or "", add_special_tokens=False))
 
 
