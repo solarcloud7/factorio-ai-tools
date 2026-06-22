@@ -288,6 +288,26 @@ class ChunkAuditor:
 _MODEL = None
 
 
+def gpu_torch_warning(cuda_available=None, has_nvidia_smi=None):
+    """Return an alert string if an NVIDIA GPU is present but torch can't use it
+    (CPU-only wheel, or a CUDA wheel with a broken/mismatched driver) — embedding
+    would silently fall back to CPU and run ~10-20x slower. Returns None when the
+    config is fine (GPU+CUDA, or genuinely no GPU). Args are injectable for tests."""
+    import shutil
+
+    if has_nvidia_smi is None:
+        has_nvidia_smi = shutil.which("nvidia-smi") is not None
+    if cuda_available is None:
+        import torch
+
+        cuda_available = torch.cuda.is_available()
+    if has_nvidia_smi and not cuda_available:
+        return ("NVIDIA GPU detected but torch cannot use CUDA (CPU-only wheel?) — "
+                "embedding will run on CPU (much slower). Run `make sync` to install "
+                "the CUDA wheel.")
+    return None
+
+
 def load_embedder():
     """Load the shared SentenceTransformer once (CUDA->CPU auto, env override)."""
     global _MODEL
@@ -298,6 +318,9 @@ def load_embedder():
         from sentence_transformers import SentenceTransformer
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        warning = gpu_torch_warning(cuda_available=(device == "cuda"))
+        if warning:
+            safe_print(f"WARNING: {warning}")
         model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
         safe_print(f"Loading embedding model {model_name} on {device}...")
         _MODEL = SentenceTransformer(model_name, device=device)
