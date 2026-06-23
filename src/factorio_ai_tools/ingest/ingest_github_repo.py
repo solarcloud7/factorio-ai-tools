@@ -37,12 +37,38 @@ SUPPORTED_EXTS = {
 def chunk_file(src_bytes, ext):
     """Return [{'node_name','node_type','content'}] for a file's bytes.
 
-    .ts/.tsx -> TypeScript AST; .lua -> Lua AST; anything else (incl. .js/.jsx)
-    -> line-window text. ``common.chunk_code`` also falls back to text when the
-    AST covers too little of the file, so nothing is silently dropped.
+    Routing is shared via ``common.kind_for_ext`` (so .ts/.tsx/.js/.jsx -> TS AST,
+    .lua -> Lua AST, everything else -> text). ``common.chunk_code`` also falls
+    back to text when the AST covers too little, so nothing is silently dropped.
     """
-    kind = "typescript" if ext in (".ts", ".tsx") else ("lua" if ext == ".lua" else None)
-    return common.chunk_code(src_bytes, kind)
+    return common.chunk_code(src_bytes, common.kind_for_ext(ext))
+
+
+def build_embed_entries(rel_path, chunk, content_hash, repo_url):
+    """Turn one chunk into one-or-more batch rows whose *embedded* text (the
+    file/component prefix + content) stays within the embedder's hard cap.
+
+    ``chunk['content']`` is already <= CONTENT_MAX_TOKENS, but the prefix adds
+    tokens; a long path could push the embedded string past EMBED_MAX_TOKENS and
+    be silently truncated. So we measure the prefix and, if needed, re-split the
+    content to fit the remaining budget — keeping content == embedded body."""
+    prefix = (f"File: {rel_path}\nComponent: {chunk['node_name']}\n"
+              f"Type: {chunk['node_type']}\nCode:\n")
+    budget = common.EMBED_MAX_TOKENS - common.count_tokens(prefix)
+    content = chunk["content"]
+    if budget < 1 or common.count_tokens(content) <= budget:
+        pieces = [content]
+    else:
+        pieces = common._line_windows(content, budget)
+    return [{
+        "text_to_embed": prefix + piece,
+        "repo_url": repo_url,
+        "file_path": rel_path,
+        "node_name": chunk["node_name"],
+        "node_type": chunk["node_type"],
+        "content": piece,
+        "content_hash": content_hash,
+    } for piece in pieces]
 
 
 def main():
@@ -60,7 +86,10 @@ def main():
         sys.exit(1)
 
     if args.repo_url:
-        repo_name = args.repo_url.split("/")[-1].replace(".git", "")
+        # Stored key is the owner/repo slug (unique); the temp dir uses the bare
+        # repo name. The .git suffix is stripped without dropping the owner.
+        repo_url = common.repo_slug_from_url(args.repo_url)
+        repo_name = repo_url.split("/")[-1]
         target_dir = os.path.join(common.REPO_ROOT, ".mod_temp", repo_name)
         if os.path.exists(target_dir):
             common.safe_print(f"Removing existing temp dir: {target_dir}")
@@ -71,8 +100,9 @@ def main():
     else:
         target_dir = args.local_path
         repo_name = os.path.basename(os.path.abspath(target_dir))
+        repo_url = repo_name  # no clone URL for a local dir; basename is the key
 
-    common.safe_print(f"Ingesting repository: {repo_name} from {target_dir}")
+    common.safe_print(f"Ingesting repository: {repo_url} from {target_dir}")
 
     dry = common.dry_run_requested()
     auditor = common.ChunkAuditor("repo_lancedb")
@@ -86,12 +116,13 @@ def main():
         model = common.load_embedder()
         has_rows = len(table) > 0
 
-    safe_repo = repo_name.replace("'", "''")
+    safe_repo = repo_url.replace("'", "''")
 
     batch = []
     batch_size = 50
     total_chunks = 0
     skipped_files = 0
+    seen_paths = set()  # every supported file currently on disk -> orphan reconcile
 
     def flush():
         nonlocal batch, total_chunks
@@ -125,7 +156,10 @@ def main():
                 continue
 
             file_path = os.path.join(root, file)
-            rel_path = os.path.relpath(file_path, target_dir)
+            # POSIX-normalize so the stored key/filter is stable across OSes
+            # (Windows relpath yields backslashes that break LIKE and read badly).
+            rel_path = common.to_posix(os.path.relpath(file_path, target_dir))
+            seen_paths.add(rel_path)
 
             try:
                 with open(file_path, "rb") as fh:
@@ -152,22 +186,21 @@ def main():
                 continue
             auditor.note_source(rel_path, len(src_bytes), len(file_chunks))
             for chunk in file_chunks:
-                context_text = (f"File: {rel_path}\nComponent: {chunk['node_name']}\n"
-                                f"Type: {chunk['node_type']}\nCode:\n{chunk['content']}")
-                batch.append({
-                    "text_to_embed": context_text,
-                    "repo_url": repo_name,
-                    "file_path": rel_path,
-                    "node_name": chunk["node_name"],
-                    "node_type": chunk["node_type"],
-                    "content": chunk["content"],
-                    "content_hash": f_hash,
-                })
+                batch.extend(build_embed_entries(rel_path, chunk, f_hash, repo_url))
                 if len(batch) >= batch_size:
                     flush()
 
     flush()
     if not dry:
+        # Orphan reconcile: drop rows for files that no longer exist on disk (run
+        # even when every file was skipped-unchanged). Empty set -> the repo has no
+        # ingestable files now, so clear all of its rows (NOT IN () is invalid SQL).
+        if has_rows:
+            if seen_paths:
+                quoted = ", ".join("'" + p.replace("'", "''") + "'" for p in sorted(seen_paths))
+                table.delete(f"repo_url = '{safe_repo}' AND file_path NOT IN ({quoted})")
+            else:
+                table.delete(f"repo_url = '{safe_repo}'")
         try:
             table.create_fts_index("content", replace=True)
         except Exception as e:

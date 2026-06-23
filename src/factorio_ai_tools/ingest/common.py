@@ -120,6 +120,86 @@ def is_ignored_path(path):
     )
 
 
+# --- Routing & keys (shared by every ingester so they can't drift) -----------
+
+# One routing table for language detection. Both code ingesters MUST use this so
+# they agree on what is AST-chunked: a hardcoded 'typescript' here once skipped
+# every .lua file, and a separate ext check elsewhere text-chunked .js.
+_EXT_KIND = {
+    ".ts": "typescript", ".tsx": "typescript", ".js": "typescript", ".jsx": "typescript",
+    ".lua": "lua",
+}
+
+
+def kind_for_ext(ext):
+    """Tree-sitter language for a file extension, or ``None`` to text-chunk it.
+    ``ext`` is matched case-insensitively and may be given with or without a dot."""
+    e = ext.lower()
+    if not e.startswith("."):
+        e = "." + e
+    return _EXT_KIND.get(e)
+
+
+def repo_slug_from_url(url):
+    """``owner/repo`` slug for a clone URL — a unique key (so two repos named
+    ``index``/``main`` don't collide) that strips only the ``.git`` suffix, never
+    the owner segment. Falls back to the last segment for a bare name."""
+    s = url.rstrip("/")
+    if s.endswith(".git"):
+        s = s[:-4]
+    parts = [p for p in s.split("/") if p]
+    if len(parts) >= 2:
+        return f"{parts[-2]}/{parts[-1]}"
+    return parts[-1] if parts else url
+
+
+def to_posix(path):
+    """Store every ``file_path`` POSIX-style so keys/filters are stable across OSes
+    (Windows ``os.path.relpath`` yields backslashes that break ``LIKE`` and reads)."""
+    return path.replace("\\", "/")
+
+
+def like_escape(value):
+    """Escape the SQL ``LIKE`` wildcards (``\\ % _``) in a literal so a filter like
+    ``player_auth`` can't match ``player1auth`` (``_`` is a single-char wildcard).
+    Backslash MUST be escaped first. Pair with ``ESCAPE '\\'`` in the clause."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def like_filter(column, value):
+    """A ready ``<column> LIKE '%...%' ESCAPE '\\'`` fragment with both LIKE
+    metachars and the single-quote SQL-literal delimiter escaped."""
+    esc = like_escape(value).replace("'", "''")
+    return f"{column} LIKE '%{esc}%' ESCAPE '\\'"
+
+
+def ensure_stores(data_dir, stores, *, url, download=None):
+    """Bootstrap missing LanceDB stores from the released zip WITHOUT clobbering
+    stores already present (the old ``extractall`` overwrote a hand-built
+    ``data/``). Extracts only members whose top-level dir is a missing store.
+    Returns the list of stores added. ``download(url, dest)`` is injectable."""
+    missing = [s for s in stores if not os.path.exists(os.path.join(data_dir, s))]
+    if not missing:
+        return []
+    import zipfile
+
+    os.makedirs(data_dir, exist_ok=True)
+    if download is None:
+        import urllib.request
+
+        download = urllib.request.urlretrieve
+    zip_path = os.path.join(data_dir, "databases.zip")
+    download(url, zip_path)
+    want = set(missing)
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.namelist():
+            top = member.replace("\\", "/").split("/")[0]
+            if top in want:
+                zf.extract(member, data_dir)
+    os.remove(zip_path)
+    return missing
+
+
 # --- Chunk-health visibility -------------------------------------------------
 
 def _strict_chunks_default():
@@ -416,6 +496,16 @@ _LUA_QUERY = """
 (table_constructor) @table
 """
 
+# Every node_type any chunker can emit. The capture names above ('class',
+# 'interface', 'function', 'method', 'table') plus the non-AST fallbacks. Stays
+# the single source of truth for the server filter docstring and the gate test.
+NODE_TYPES = frozenset({
+    "class", "interface", "function", "method", "table",  # tree-sitter captures
+    "node",         # a captured node with no specific capture name
+    "text_chunk",   # line-window fallback for code with no usable AST
+    "text_file",    # non-code files (prose/config)
+})
+
 _LANG_CACHE = {}
 
 
@@ -596,19 +686,47 @@ def extract_ast_chunks(src_bytes, kind, include_comments=False, max_tokens=CONTE
     return out
 
 
+_IMPORT_PREFIXES = ("import ", "export ", "from ", "require(", "local ")
+
+
+def _is_import_line(line):
+    """True for an import/require/re-export line — code that AST captures don't
+    (and shouldn't) cover, so it must be excluded from the coverage denominator or
+    every import-heavy module would falsely look "mostly uncovered" and get text-
+    chunked, discarding its good per-declaration AST chunks."""
+    s = line.strip()
+    if not s:
+        return False
+    if "require(" in s or "require " in s:
+        return True
+    if s.startswith(("import ", "from ")):
+        return True
+    # re-exports: `export { x } from './y'`, `export * from './y'` — but NOT
+    # `export class/function/const ...`, which are real declarations.
+    if s.startswith("export ") and " from " in s:
+        return True
+    if s.startswith("export {") or s.startswith("export *"):
+        return True
+    return False
+
+
 def chunk_code(src_bytes, kind, include_comments=False, max_tokens=CONTENT_MAX_TOKENS):
     """AST chunks for a code file, with a coverage-based fallback to text-line
-    chunks. Falls back when the AST is unavailable/empty OR covers less than half
-    the file's non-whitespace bytes — so content the grammar's captures miss
-    (functions assigned to locals, arrow functions, ``require`` lists, etc.) is
-    never silently dropped. Returns ``[{'node_name','node_type','content'}]``."""
+    chunks. Falls back only when the AST is unavailable/empty OR misses a
+    substantial fraction of the file's *non-import* code — so content the grammar's
+    captures legitimately miss (top-level statements, arrow functions assigned to
+    locals, ``data:extend`` lists) is never silently dropped, while import-heavy
+    modules keep their per-declaration AST chunks instead of collapsing to text.
+    Returns ``[{'node_name','node_type','content'}]``."""
     ast = (
         extract_ast_chunks(src_bytes, kind, include_comments=include_comments, max_tokens=max_tokens)
         if kind else None
     )
     code = src_bytes.decode("utf-8", "replace")
     if ast:
-        body = len(code.strip())
+        # Coverage denominator excludes import/require lines: AST captures
+        # declarations, not imports, so counting imports against it misfires.
+        body = sum(len(ln) for ln in code.splitlines() if ln.strip() and not _is_import_line(ln))
         covered = sum(len(c["content"]) for c in ast)
         if body == 0 or covered >= 0.5 * body:
             return ast

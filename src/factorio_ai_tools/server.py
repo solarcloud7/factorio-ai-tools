@@ -8,6 +8,8 @@ import torch
 from sentence_transformers import SentenceTransformer
 from mcp.server.fastmcp import FastMCP
 
+from factorio_ai_tools.ingest import common
+
 # Define tool version
 TOOL_VERSION = "1.0.0"
 
@@ -41,8 +43,6 @@ def optional_tool():
     return decorator
 
 import urllib.request
-import zipfile
-import shutil
 
 # Determine if we are running locally (git/docker) or via PyPI/uvx
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -60,21 +60,15 @@ else:
 ALL_STORES = ["factorio_lancedb", "clusterio_lancedb", "wiki_lancedb", "forum_lancedb", "repo_lancedb"]
 
 def ensure_databases():
-    if all(os.path.exists(os.path.join(DATA_DIR, s)) for s in ALL_STORES):
+    missing = [s for s in ALL_STORES if not os.path.exists(os.path.join(DATA_DIR, s))]
+    if not missing:
         return
-
-    os.makedirs(DATA_DIR, exist_ok=True)
-    print(f"Databases not found locally. Downloading to {DATA_DIR}...", file=sys.stderr)
+    print(f"Databases missing {missing}; downloading to {DATA_DIR}...", file=sys.stderr)
     url = "https://github.com/solarcloud7/factorio-ai-tools/releases/latest/download/factorio_lancedb.zip"
-    zip_path = os.path.join(DATA_DIR, "databases.zip")
-    
     try:
-        urllib.request.urlretrieve(url, zip_path)
-        print("Extracting databases...", file=sys.stderr)
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(DATA_DIR)
-        os.remove(zip_path)
-        print("Databases successfully installed!", file=sys.stderr)
+        # Extracts ONLY the missing stores so a hand-built data/ is never clobbered.
+        added = common.ensure_stores(DATA_DIR, ALL_STORES, url=url)
+        print(f"Databases installed: {added}", file=sys.stderr)
     except Exception as e:
         print(f"Failed to download databases: {e}", file=sys.stderr)
 
@@ -232,7 +226,7 @@ def search_clusterio_code(queries: list[str], node_type: str = None, plugin: str
 
     Args:
         queries: A list of semantic search queries to batch process.
-        node_type: Optional AST node-type filter ('class', 'interface', 'function', 'method', 'text_file').
+        node_type: Optional AST node-type filter. Code nodes: 'class', 'interface', 'function', 'method' (TypeScript), 'table' (Lua); fallbacks: 'text_chunk' (uncapturable code lines), 'text_file' (non-code files).
         plugin: Optional plugin/package name to scope the search to one component, matched against the file path (e.g. 'subspace_storage', 'player_auth', 'inventory_sync', 'controller').
         limit: Maximum number of chunks to return per query (default 5, max 20).
     """
@@ -258,8 +252,8 @@ def search_clusterio_code(queries: list[str], node_type: str = None, plugin: str
                 safe_node = node_type.replace("'", "''")
                 conditions.append(f"node_type = '{safe_node}'")
             if plugin:
-                safe_plugin = plugin.replace("'", "''")
-                conditions.append(f"file_path LIKE '%{safe_plugin}%'")
+                # Escaped LIKE so 'player_auth' can't match 'player1auth' (_ wildcard).
+                conditions.append(common.like_filter("file_path", plugin))
             if conditions:
                 q = q.where(" AND ".join(conditions))
 
@@ -476,8 +470,7 @@ def search_github_code(queries: list[str], repo_name: str = None, limit: int = 5
             q = table_repo.search(query_vec.tolist())
             
             if repo_name:
-                safe_repo = repo_name.replace("'", "''")
-                q = q.where(f"repo_url LIKE '%{safe_repo}%'")
+                q = q.where(common.like_filter("repo_url", repo_name))
                 
             results = q.limit(limit).to_list()
             

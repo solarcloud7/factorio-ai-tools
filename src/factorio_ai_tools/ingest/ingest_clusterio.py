@@ -28,15 +28,17 @@ class CodeChunk(LanceModel):
     vector: Vector(common.EMBEDDING_DIM)
 
 
-def extract_chunks(file_path, src_bytes, content_hash):
-    """AST chunks (with comments) for a .ts/.js file; coverage-fallback to text."""
+def extract_chunks(file_path, src_bytes, content_hash, kind):
+    """AST chunks (with comments) for a code file; coverage-fallback to text.
+    ``kind`` comes from ``common.kind_for_ext`` so .lua is AST'd as Lua, not
+    forced through the TypeScript grammar (which dropped every Lua file)."""
     return [{
         "file_path": file_path,
         "node_type": c["node_type"],
         "node_name": c["node_name"],
         "content": c["content"],
         "content_hash": content_hash,
-    } for c in common.chunk_code(src_bytes, "typescript", include_comments=True)]
+    } for c in common.chunk_code(src_bytes, kind, include_comments=True)]
 
 
 def extract_text_chunks(file_path, content, content_hash):
@@ -75,6 +77,7 @@ def main():
     auditor = common.ChunkAuditor("clusterio_lancedb")
     all_chunks = []
     skipped_count = 0
+    seen_paths = set()  # every current file -> orphan reconcile after the loop
     for f in all_files:
         try:
             with open(f, 'rb') as file:
@@ -85,7 +88,8 @@ def main():
 
         # Store a clean repo-relative path (e.g. plugins/player_auth/..., not
         # ./clusterio\plugins\...) so results read well and per-plugin filtering works.
-        rel_path = os.path.relpath(f, repo_path).replace(os.sep, "/")
+        rel_path = common.to_posix(os.path.relpath(f, repo_path))
+        seen_paths.add(rel_path)
         safe_f = rel_path.replace("'", "''")
         if table is not None and len(table) > 0:
             existing = table.search().where(f"file_path = '{safe_f}'").limit(1).to_list()
@@ -94,13 +98,20 @@ def main():
                 continue
             table.delete(f"file_path = '{safe_f}'")
 
-        if f.endswith('.ts') or f.endswith('.js'):
-            file_chunks = extract_chunks(rel_path, content_bytes, f_hash)
+        kind = common.kind_for_ext(os.path.splitext(f)[1])
+        if kind:
+            file_chunks = extract_chunks(rel_path, content_bytes, f_hash, kind)
         else:
-            try:
-                file_chunks = extract_text_chunks(rel_path, content_bytes.decode('utf8'), f_hash)
-            except UnicodeDecodeError:
-                file_chunks = []
+            text = content_bytes.decode('utf8', 'replace')
+            if "�" in text:
+                auditor.note_decode_replacements(1)
+            file_chunks = extract_text_chunks(rel_path, text, f_hash)
+
+        # Normalize PER FILE (not store-wide): a store-wide dedup collapses two
+        # distinct files that happen to share content (e.g. re-export index.ts),
+        # losing one file's rows entirely.
+        file_chunks, nstats = common.normalize_chunks(file_chunks, content_key="content")
+        auditor.note_dups(nstats["dropped_dup"])
         if len(file_chunks) > common.MAX_CHUNKS_PER_FILE:
             common.safe_print(f"Skipping bulk file {rel_path} ({len(file_chunks)} chunks).")
             auditor.note_skipped_file(rel_path, len(file_chunks))
@@ -108,15 +119,16 @@ def main():
         auditor.note_source(rel_path, len(content_bytes), len(file_chunks))
         all_chunks.extend(file_chunks)
 
+    # Orphan reconcile: drop rows for files removed from the checkout since the
+    # last run. Guarded on a non-empty set so a misconfigured CLUSTERIO_REPO
+    # (zero files) can't wipe the whole store.
+    if table is not None and len(table) > 0 and seen_paths:
+        quoted = ", ".join("'" + p.replace("'", "''") + "'" for p in sorted(seen_paths))
+        table.delete(f"file_path NOT IN ({quoted})")
+
     common.safe_print(f"Skipped {skipped_count} unchanged files.")
     common.safe_print(f"Extracted {len(all_chunks)} new/modified chunks.")
 
-    all_chunks, nstats = common.normalize_chunks(all_chunks, content_key="content")
-    auditor.note_dups(nstats["dropped_dup"])
-    common.safe_print(
-        f"Normalized to {len(all_chunks)} chunks "
-        f"(dropped {nstats['dropped_tiny']} tiny, {nstats['dropped_dup']} dup)."
-    )
     auditor.add_batch(all_chunks, text_key="content", source_key="file_path")
     auditor.summary()
 
