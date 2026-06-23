@@ -36,7 +36,9 @@ EMBEDDING_DIM = 768
 # Token budgets for chunking. The embedder (bge-base-en-v1.5) hard-caps at 512
 # tokens and silently truncates beyond, so sizing is measured in REAL tokens, not
 # chars (code tokenizes ~2-4x denser than prose, so a char cap under-counts).
-EMBED_MAX_TOKENS = 512        # auditor cap on the full embedded text (incl. context prefix)
+EMBED_MAX_TOKENS = 510        # effective content budget: 512 hard cap minus the CLS+SEP
+                              # special tokens the model adds (count_tokens uses
+                              # add_special_tokens=False), measured on the full embedded text
 CONTENT_MAX_TOKENS = 400      # cap on a chunk's raw content; leaves headroom for the prefix
 MIN_CHUNK_CHARS = 10          # drop a chunk whose stripped raw content is shorter than this
 MAX_CHUNKS_PER_FILE = 400     # a single file producing more is bulk data (e.g. a serialized
