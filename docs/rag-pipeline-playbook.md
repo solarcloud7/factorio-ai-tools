@@ -208,7 +208,9 @@ hybrid-ready stores.
 
 Beyond the dry-run, the offline test suite (`make test`) encodes the same
 invariants (see [tests/test_pipeline_invariants.py](../tests/test_pipeline_invariants.py)),
-and `make eval` scores retrieval against the golden set before shipping.
+`make eval` scores retrieval against the golden set before shipping, and after a
+release `make smoke` installs the published wheel into an isolated venv, forces a
+fresh DB download, and asserts every tool end-to-end.
 
 ---
 

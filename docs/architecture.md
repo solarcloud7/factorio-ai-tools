@@ -91,6 +91,7 @@ then ship:
 | `make deploy-dbs` | `compact` + `package-dbs` + upload the zip to the latest release. |
 | `make test` | Run the offline test suite. |
 | `make eval` | Retrieval recall@k (vector vs FTS vs hybrid) on the golden set. |
+| `make smoke` | Release smoke test: install the published wheel into an isolated venv, force a fresh DB download, and assert every tool ([maintenance/smoke_release.py](../maintenance/smoke_release.py)). |
 | `make mcp` | Start the MCP server. |
 
 The asset name `factorio_lancedb.zip` is load-bearing: `server.ensure_databases()`
