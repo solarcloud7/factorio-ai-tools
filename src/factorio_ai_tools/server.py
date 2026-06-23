@@ -113,6 +113,37 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
 model = SentenceTransformer(model_name, device=device)
 
+# --- Hybrid retrieval (RRF over the ingest-built FTS index + vector) ----------
+# Validated by maintenance/eval_retrieval.py: hybrid >= vector on the golden set
+# everywhere FTS exists, and FTS-alone is worse on prose — so hybrid never
+# regresses and recovers lexical/identifier matches vector can miss. A store with
+# no FTS index (or any hybrid error) transparently falls back to pure vector; the
+# fallback is cached per table so we don't re-attempt a known-missing index.
+from lancedb.rerankers import RRFReranker
+
+_RRF = RRFReranker()
+_NO_HYBRID = set()
+
+
+def hybrid_search(table, query_str, query_vec, limit, where=None):
+    """Top-``limit`` rows via hybrid search, else pure vector. ``query_vec`` is the
+    already-encoded query embedding; ``query_str`` drives the FTS half. ``where`` is
+    an optional pre-built (and SQL-escaped) filter clause."""
+    vec = query_vec.tolist() if hasattr(query_vec, "tolist") else query_vec
+    if id(table) not in _NO_HYBRID:
+        try:
+            q = table.search(query_type="hybrid").vector(vec).text(query_str).rerank(_RRF)
+            if where:
+                q = q.where(where)
+            return q.limit(limit).to_list()
+        except Exception as e:
+            _NO_HYBRID.add(id(table))
+            print(f"Hybrid unavailable for a store ({str(e)[:120]}); using vector.", file=sys.stderr)
+    q = table.search(vec)
+    if where:
+        q = q.where(where)
+    return q.limit(limit).to_list()
+
 @optional_tool()
 def get_mcp_version_info() -> str:
     """
@@ -189,20 +220,17 @@ def search_factorio_docs(queries: list[str], class_filter: str = None, limit: in
         all_formatted_chunks = []
         
         for idx, query_vec in enumerate(query_vecs):
-            q = table_factorio.search(query_vec.tolist())
-            
             conditions = []
             if class_filter:
                 safe_class = class_filter.replace("'", "''")
                 conditions.append(f"class_name = '{safe_class}'")
-            
+
             ver = factorio_version if factorio_version not in ("latest", "") else "latest"
             safe_ver = ver.replace("'", "''")
             conditions.append(f"version = '{safe_ver}'")
-            
-            q = q.where(" AND ".join(conditions))
-                
-            results = q.limit(limit).to_list()
+
+            results = hybrid_search(table_factorio, queries[idx], query_vec, limit,
+                                    where=" AND ".join(conditions))
             
             all_formatted_chunks.append(f"### Results for query: '{queries[idx]}'")
             
@@ -245,8 +273,6 @@ def search_clusterio_code(queries: list[str], node_type: str = None, plugin: str
         all_formatted_chunks = []
         
         for idx, query_vec in enumerate(query_vecs):
-            q = table_clusterio.search(query_vec.tolist())
-
             conditions = []
             if node_type:
                 safe_node = node_type.replace("'", "''")
@@ -254,10 +280,9 @@ def search_clusterio_code(queries: list[str], node_type: str = None, plugin: str
             if plugin:
                 # Escaped LIKE so 'player_auth' can't match 'player1auth' (_ wildcard).
                 conditions.append(common.like_filter("file_path", plugin))
-            if conditions:
-                q = q.where(" AND ".join(conditions))
 
-            results = q.limit(limit).to_list()
+            results = hybrid_search(table_clusterio, queries[idx], query_vec, limit,
+                                    where=" AND ".join(conditions) if conditions else None)
             
             all_formatted_chunks.append(f"### Results for query: '{queries[idx]}'")
             
@@ -305,8 +330,7 @@ def search_factorio_wiki(queries: list[str], limit: int = 5) -> str:
         all_formatted_chunks = []
         
         for idx, query_vec in enumerate(query_vecs):
-            q = table_wiki.search(query_vec.tolist())
-            results = q.limit(limit).to_list()
+            results = hybrid_search(table_wiki, queries[idx], query_vec, limit)
             
             all_formatted_chunks.append(f"### Wiki Results for query: '{queries[idx]}'")
             
@@ -348,8 +372,7 @@ def search_factorio_forums(queries: list[str], limit: int = 5) -> str:
         all_formatted_chunks = []
         
         for idx, query_vec in enumerate(query_vecs):
-            q = table_forum.search(query_vec.tolist())
-            results = q.limit(limit).to_list()
+            results = hybrid_search(table_forum, queries[idx], query_vec, limit)
             
             all_formatted_chunks.append(f"### Forum Results for query: '{queries[idx]}'")
             
@@ -467,12 +490,8 @@ def search_github_code(queries: list[str], repo_name: str = None, limit: int = 5
         all_formatted_chunks = []
         
         for idx, query_vec in enumerate(query_vecs):
-            q = table_repo.search(query_vec.tolist())
-            
-            if repo_name:
-                q = q.where(common.like_filter("repo_url", repo_name))
-                
-            results = q.limit(limit).to_list()
+            where = common.like_filter("repo_url", repo_name) if repo_name else None
+            results = hybrid_search(table_repo, queries[idx], query_vec, limit, where=where)
             
             all_formatted_chunks.append(f"### Results for query: '{queries[idx]}'")
             
