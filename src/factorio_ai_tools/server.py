@@ -1,3 +1,13 @@
+"""FastMCP server exposing the Factorio AI Tools search tools over MCP.
+
+Opens the five LanceDB stores under ``data/`` (each in its own try/except, so a
+missing store degrades only its tool rather than crashing the server), loads the
+shared embedding model once, and serves hybrid search (``common.hybrid_search``)
+plus the blueprint / mod-portal / version utilities and the
+``factorio_clusterio_expert`` prompt. Runs over stdio by default, or SSE with
+``--sse``. See ``docs/tools.md``.
+"""
+
 import os
 import sys
 import lancedb
