@@ -130,6 +130,159 @@ def test_coverage_falls_back_when_uncapturable():
     assert chunks and all(c["node_type"] == "text_chunk" for c in chunks)
 
 
+def test_coverage_keeps_ast_for_multiline_imports():
+    """A MULTI-LINE `import { ... } from '...'` block must be fully excluded from
+    the coverage denominator (not just its first line), or an import-heavy module
+    still collapses to text chunks. The single-line gate test missed this."""
+    src = ("import {\n" + "".join(f"  x{i},\n" for i in range(15)) + "} from './big';\n"
+           + "class Foo {\n  bar() { return 1; }\n}\n")
+    chunks = common.chunk_code(src.encode("utf-8"), "typescript")
+    assert any(c["node_type"] == "class" for c in chunks), [c["node_type"] for c in chunks]
+
+
+# --- Orphan-reconcile empty-set branches (divergent + destructive) -----------
+
+
+def test_repo_empty_seen_paths_wipes_that_repo(tmp_path, tmp_data_dir, fake_embedder, monkeypatch):
+    """repo ingester: when a repo has NO ingestable files left, the empty-seen_paths
+    branch clears that repo's rows (NOT IN () is invalid SQL, so it deletes all)."""
+    from factorio_ai_tools.ingest import ingest_github_repo
+
+    repo = tmp_path / "r"
+    repo.mkdir()
+    (repo / "a.lua").write_text("function a() return 1 end\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["x", "--local-path", str(repo)])
+    ingest_github_repo.main()
+    assert lancedb.connect(str(tmp_data_dir / "repo_lancedb")).open_table("codebase").count_rows() > 0
+
+    (repo / "a.lua").unlink()  # no ingestable files remain
+    ingest_github_repo.main()
+    assert lancedb.connect(str(tmp_data_dir / "repo_lancedb")).open_table("codebase").count_rows() == 0
+
+
+def test_clusterio_empty_seen_paths_preserves_store(tmp_path, tmp_data_dir, fake_embedder, monkeypatch):
+    """clusterio ingester: a run that finds ZERO files (e.g. a misconfigured
+    CLUSTERIO_REPO) must NOT wipe the store — the empty-set branch is guarded."""
+    from factorio_ai_tools.ingest import ingest_clusterio
+
+    repo = tmp_path / "clus"
+    (repo / "plugins" / "p").mkdir(parents=True)
+    (repo / "plugins" / "p" / "index.ts").write_text("export class Foo {}\n", encoding="utf-8")
+    (repo / "package.json").write_text('{"version": "1.0.0"}', encoding="utf-8")
+    monkeypatch.setenv("CLUSTERIO_REPO", str(repo))
+    ingest_clusterio.main()
+    n = lancedb.connect(str(tmp_data_dir / "clusterio_lancedb")).open_table("codebase").count_rows()
+    assert n > 0
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("CLUSTERIO_REPO", str(empty))
+    ingest_clusterio.main()
+    assert lancedb.connect(str(tmp_data_dir / "clusterio_lancedb")).open_table("codebase").count_rows() == n
+
+
+# --- Hybrid search fallback (the headline feature — was untested) -------------
+
+
+class _FakeQuery:
+    def __init__(self, table, rows):
+        self._t, self._rows, self._n = table, rows, None
+
+    def vector(self, v):
+        return self
+
+    def text(self, t):
+        return self
+
+    def rerank(self, r):
+        return self
+
+    def where(self, w):
+        self._t.last_where = w
+        return self
+
+    def limit(self, n):
+        self._n = n
+        return self
+
+    def to_list(self):
+        return self._rows[: self._n] if self._n else self._rows
+
+
+class _FakeTable:
+    """Records hybrid attempts and the where-clause threaded to the vector path."""
+
+    def __init__(self, rows, hybrid_error=None):
+        self.rows, self.hybrid_error = rows, hybrid_error
+        self.last_where, self.hybrid_attempts = None, 0
+
+    def search(self, *args, **kwargs):
+        if kwargs.get("query_type") == "hybrid":
+            self.hybrid_attempts += 1
+            if self.hybrid_error is not None:
+                raise self.hybrid_error
+        return _FakeQuery(self, self.rows)
+
+
+def test_is_missing_fts_error_classifier():
+    assert common.is_missing_fts_error("Cannot perform full text search unless an INVERTED index has been created")
+    assert common.is_missing_fts_error("no full text search index found on column")
+    assert not common.is_missing_fts_error("connection reset by peer")
+
+
+def test_hybrid_transient_error_does_not_poison_table():
+    """A transient/query-specific hybrid error must fall back for THAT query only —
+    not permanently disable hybrid for the whole table (the _NO_HYBRID poisoning)."""
+    common._NO_HYBRID.clear()
+    t = _FakeTable(rows=[{"file_path": "a"}], hybrid_error=RuntimeError("transient lock"))
+    out = common.hybrid_search(t, "q", [0.0] * 4, 5)
+    assert out == [{"file_path": "a"}]           # fell back to vector
+    assert id(t) not in common._NO_HYBRID        # NOT cached as broken
+    common.hybrid_search(t, "q", [0.0] * 4, 5)
+    assert t.hybrid_attempts == 2                # retried hybrid, not disabled
+
+
+def test_hybrid_missing_fts_is_cached():
+    """A genuinely missing FTS index IS cached (permanent) so we stop retrying."""
+    common._NO_HYBRID.clear()
+    err = RuntimeError("Cannot perform full text search unless an INVERTED index has been created")
+    t = _FakeTable(rows=[{"file_path": "a"}], hybrid_error=err)
+    common.hybrid_search(t, "q", [0.0] * 4, 5)
+    assert id(t) in common._NO_HYBRID
+    common.hybrid_search(t, "q", [0.0] * 4, 5)
+    assert t.hybrid_attempts == 1                # not retried
+
+
+def test_hybrid_where_threaded_to_vector_fallback():
+    """The filter must survive the fallback — dropping it would silently ignore a
+    class_filter/version/plugin/repo_url scope on the vector path."""
+    common._NO_HYBRID.clear()
+    t = _FakeTable(rows=[{"file_path": "a"}], hybrid_error=RuntimeError("transient"))
+    common.hybrid_search(t, "q", [0.0] * 4, 5, where="version = 'latest'")
+    assert t.last_where == "version = 'latest'"
+
+
+def test_hybrid_real_table_happy_path(tmp_path):
+    """End-to-end against a real LanceDB table with an FTS index: hybrid returns the
+    lexical match (proves the RRF/FTS+vector path actually runs, not just fallback)."""
+    import pyarrow as pa
+
+    common._NO_HYBRID.clear()
+    db = lancedb.connect(str(tmp_path / "h"))
+    schema = pa.schema([
+        pa.field("vector", pa.list_(pa.float32(), 4)),
+        pa.field("content", pa.string()),
+        pa.field("file_path", pa.string()),
+    ])
+    t = db.create_table("c", schema=schema, data=[
+        {"vector": [0.1, 0.2, 0.3, 0.4], "content": "iron-plate recipe smelting", "file_path": "recipe.lua"},
+        {"vector": [0.9, 0.8, 0.7, 0.6], "content": "copper wire assembly", "file_path": "wire.lua"},
+    ])
+    t.create_fts_index("content", replace=True)
+    out = common.hybrid_search(t, "iron-plate recipe", [0.1, 0.2, 0.3, 0.4], 5)
+    assert any(r["file_path"] == "recipe.lua" for r in out)
+
+
 # --- Prefix-aware embedded cap -----------------------------------------------
 
 

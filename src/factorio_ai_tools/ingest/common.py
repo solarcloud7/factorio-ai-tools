@@ -143,8 +143,9 @@ def kind_for_ext(ext):
 def repo_slug_from_url(url):
     """``owner/repo`` slug for a clone URL — a unique key (so two repos named
     ``index``/``main`` don't collide) that strips only the ``.git`` suffix, never
-    the owner segment. Falls back to the last segment for a bare name."""
-    s = url.rstrip("/")
+    the owner segment. Drops any ``?query``/``#fragment`` and trailing slash first.
+    Falls back to the last segment for a bare name."""
+    s = url.split("#", 1)[0].split("?", 1)[0].rstrip("/")
     if s.endswith(".git"):
         s = s[:-4]
     parts = [p for p in s.split("/") if p]
@@ -240,6 +241,7 @@ class ChunkAuditor:
         self.strict = _strict_chunks_default() if strict is None else strict
         self.total = self.empty = self.tiny = self.oversized = 0
         self.dups = self.decode_replacements = self.skipped_large = 0
+        self.dropped_tiny = 0  # tiny chunks dropped by normalize_chunks (pre-add)
         self._skipped_examples = []
         self._tok_sizes = []
         self._by_type = {}
@@ -287,6 +289,13 @@ class ChunkAuditor:
         """Record pure-duplicate chunks dropped during normalization."""
         self.dups += n
 
+    def note_tiny(self, n):
+        """Record sub-min-char chunks dropped during normalization. normalize_chunks
+        drops these BEFORE add() ever sees them, so without this the auditor's tiny
+        signal would silently read zero (a visibility regression of the per-file
+        normalize move)."""
+        self.dropped_tiny += n
+
     def note_decode_replacements(self, n):
         """Record files that needed UTF-8 replacement (possible binary/encoding issue)."""
         self.decode_replacements += n
@@ -323,6 +332,8 @@ class ChunkAuditor:
             warnings.append(f"{self.empty} empty")
         if self.tiny:
             warnings.append(f"{self.tiny} tiny (<{self.min_chars} chars)")
+        if self.dropped_tiny:
+            warnings.append(f"{self.dropped_tiny} tiny dropped by normalize (<{self.min_chars} chars)")
         if self.decode_replacements:
             warnings.append(f"{self.decode_replacements} file(s) needed utf-8 replacement")
         if self.skipped_large:
@@ -423,6 +434,64 @@ def embed(texts, model=None):
             "the embedding model is misconfigured (every store must share 768-dim vectors)."
         )
     return vectors
+
+
+# --- Hybrid retrieval (shared so server.py and tests use one implementation) ---
+# RRF over the ingest-built FTS index + vector. A store with NO FTS index falls
+# back to pure vector, cached per table (permanent — correct). A transient/
+# query-specific hybrid error (a lock, an FTS-parser-hostile query) is NOT cached:
+# it falls back for that one query only, so a single odd query can't permanently
+# disable hybrid for the whole process.
+_RRF = None
+_NO_HYBRID = set()  # id(table) -> table genuinely has no FTS index (permanent)
+
+
+def _rrf():
+    global _RRF
+    if _RRF is None:
+        from lancedb.rerankers import RRFReranker
+
+        _RRF = RRFReranker()
+    return _RRF
+
+
+def is_missing_fts_error(msg):
+    """True if the error means the table has no FTS index (structural, permanent),
+    vs a transient/query-specific failure. LanceDB raises e.g. 'Cannot perform full
+    text search unless an INVERTED index has been created ...'."""
+    m = str(msg).lower()
+    return "inverted index" in m or ("full text search" in m and "index" in m)
+
+
+def _vector_only(table, vec, limit, where):
+    q = table.search(vec)
+    if where:
+        q = q.where(where)
+    return q.limit(limit).to_list()
+
+
+def hybrid_search(table, query_str, query_vec, limit, where=None):
+    """Top-``limit`` rows via hybrid search (RRF over FTS + vector), else pure
+    vector. ``query_vec`` is the already-encoded query embedding; ``query_str``
+    drives the FTS half. ``where`` is an optional pre-built (and SQL-escaped) filter
+    clause, threaded through both the hybrid and the vector-fallback paths."""
+    vec = query_vec.tolist() if hasattr(query_vec, "tolist") else query_vec
+    if id(table) not in _NO_HYBRID:
+        try:
+            q = table.search(query_type="hybrid").vector(vec).text(query_str).rerank(_rrf())
+            if where:
+                q = q.where(where)
+            return q.limit(limit).to_list()
+        except Exception as e:
+            detail = str(e)[:160].encode("ascii", "replace").decode("ascii")
+            if is_missing_fts_error(e):
+                _NO_HYBRID.add(id(table))  # permanent: this store has no FTS index
+                # stderr, not safe_print: the MCP server speaks JSON on stdout.
+                print(f"No FTS index for a store ({detail}); using vector search.", file=sys.stderr)
+            else:
+                # transient/query-specific — do NOT poison the table; this query only.
+                print(f"Hybrid failed for one query ({detail}); vector fallback for it.", file=sys.stderr)
+    return _vector_only(table, vec, limit, where)
 
 
 _TOKENIZER = None
@@ -692,28 +761,50 @@ def extract_ast_chunks(src_bytes, kind, include_comments=False, max_tokens=CONTE
     return out
 
 
-_IMPORT_PREFIXES = ("import ", "export ", "from ", "require(", "local ")
+def _non_import_body_chars(code):
+    """Sum of chars on lines that are real code — the coverage *denominator*.
 
-
-def _is_import_line(line):
-    """True for an import/require/re-export line — code that AST captures don't
-    (and shouldn't) cover, so it must be excluded from the coverage denominator or
-    every import-heavy module would falsely look "mostly uncovered" and get text-
-    chunked, discarding its good per-declaration AST chunks."""
-    s = line.strip()
-    if not s:
-        return False
-    if "require(" in s or "require " in s:
-        return True
-    if s.startswith(("import ", "from ")):
-        return True
-    # re-exports: `export { x } from './y'`, `export * from './y'` — but NOT
-    # `export class/function/const ...`, which are real declarations.
-    if s.startswith("export ") and " from " in s:
-        return True
-    if s.startswith("export {") or s.startswith("export *"):
-        return True
-    return False
+    Excludes blank lines, comments (``//`` ``/* */`` ``--`` ``#``), and
+    import/require/re-export statements **including multi-line** ``import { ... }
+    from '...'`` / ``export { ... } from '...'`` blocks. AST captures declarations,
+    not imports/comments, so counting those would make an import-heavy (or
+    comment-heavy, since repo ingest uses ``include_comments=False``) module look
+    falsely uncovered and collapse to coarse text chunks. Stateful so a multi-line
+    import's continuation lines are excluded too, not just the opener."""
+    total = 0
+    in_import = in_block_comment = False
+    for ln in code.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        if in_block_comment:
+            if "*/" in s:
+                in_block_comment = False
+            continue
+        if s.startswith("/*"):
+            if "*/" not in s:
+                in_block_comment = True
+            continue
+        if s.startswith(("//", "--", "#")):
+            continue
+        if in_import:
+            # continuation of a multi-line import/export clause; it ends on the
+            # line bearing `from` or a bare close of the brace/paren list.
+            if " from " in s or s.endswith(";") or s.startswith(("}", ")")):
+                in_import = False
+            continue
+        is_import = (
+            s.startswith(("import ", "from ")) or "require(" in s or "require " in s
+            or (s.startswith("export ") and (" from " in s or s.startswith(("export {", "export *"))))
+        )
+        if is_import:
+            # a multi-line opener (`import {` / `export {` with no `from`/`;` yet)
+            # starts an exclusion run until its clause closes.
+            if s.startswith(("import", "export")) and " from " not in s and not s.endswith(";"):
+                in_import = True
+            continue
+        total += len(ln)
+    return total
 
 
 def chunk_code(src_bytes, kind, include_comments=False, max_tokens=CONTENT_MAX_TOKENS):
@@ -730,9 +821,7 @@ def chunk_code(src_bytes, kind, include_comments=False, max_tokens=CONTENT_MAX_T
     )
     code = src_bytes.decode("utf-8", "replace")
     if ast:
-        # Coverage denominator excludes import/require lines: AST captures
-        # declarations, not imports, so counting imports against it misfires.
-        body = sum(len(ln) for ln in code.splitlines() if ln.strip() and not _is_import_line(ln))
+        body = _non_import_body_chars(code)
         covered = sum(len(c["content"]) for c in ast)
         if body == 0 or covered >= 0.5 * body:
             return ast

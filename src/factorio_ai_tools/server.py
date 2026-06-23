@@ -113,36 +113,12 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
 model = SentenceTransformer(model_name, device=device)
 
-# --- Hybrid retrieval (RRF over the ingest-built FTS index + vector) ----------
-# Validated by maintenance/eval_retrieval.py: hybrid >= vector on the golden set
-# everywhere FTS exists, and FTS-alone is worse on prose — so hybrid never
-# regresses and recovers lexical/identifier matches vector can miss. A store with
-# no FTS index (or any hybrid error) transparently falls back to pure vector; the
-# fallback is cached per table so we don't re-attempt a known-missing index.
-from lancedb.rerankers import RRFReranker
-
-_RRF = RRFReranker()
-_NO_HYBRID = set()
-
-
-def hybrid_search(table, query_str, query_vec, limit, where=None):
-    """Top-``limit`` rows via hybrid search, else pure vector. ``query_vec`` is the
-    already-encoded query embedding; ``query_str`` drives the FTS half. ``where`` is
-    an optional pre-built (and SQL-escaped) filter clause."""
-    vec = query_vec.tolist() if hasattr(query_vec, "tolist") else query_vec
-    if id(table) not in _NO_HYBRID:
-        try:
-            q = table.search(query_type="hybrid").vector(vec).text(query_str).rerank(_RRF)
-            if where:
-                q = q.where(where)
-            return q.limit(limit).to_list()
-        except Exception as e:
-            _NO_HYBRID.add(id(table))
-            print(f"Hybrid unavailable for a store ({str(e)[:120]}); using vector.", file=sys.stderr)
-    q = table.search(vec)
-    if where:
-        q = q.where(where)
-    return q.limit(limit).to_list()
+# Hybrid retrieval (RRF over the ingest-built FTS index + vector) lives in
+# common.hybrid_search so the server and the offline tests share one
+# implementation. Validated by maintenance/eval_retrieval.py: hybrid >= vector on
+# the golden set everywhere FTS exists. Stores with no FTS index (forum) fall back
+# to pure vector; a transient/query-specific error falls back for that query only.
+hybrid_search = common.hybrid_search
 
 @optional_tool()
 def get_mcp_version_info() -> str:

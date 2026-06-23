@@ -72,9 +72,12 @@ def main():
         by_store.setdefault(q["store"], []).append(q)
 
     kmax = max(KS)
-    # results[store][method][k] = list of per-query hits (0/1)
-    results = {}
-    method_available = {}
+    methods = ("vector", "fts", "hybrid")
+    # results[store][method][k] = list of per-query hits (0/1) for queries that ran;
+    # errors[store][method] = count of queries where the method raised. Tracking a
+    # COUNT (not a single bool) means one late failure can't discard the earlier
+    # hits or silently flip a whole method to "unavailable".
+    results, errors, first_err = {}, {}, {}
 
     for store, queries in by_store.items():
         store_dir, table_name, _text_col = STORE_MAP[store]
@@ -84,8 +87,9 @@ def main():
             continue
         table = lancedb.connect(path).open_table(table_name)
 
-        results[store] = {m: {k: [] for k in KS} for m in ("vector", "fts", "hybrid")}
-        method_available[store] = {"vector": True, "fts": True, "hybrid": True}
+        results[store] = {m: {k: [] for k in KS} for m in methods}
+        errors[store] = {m: 0 for m in methods}
+        first_err[store] = {m: "" for m in methods}
 
         for q in queries:
             vec = common.embed([q["query"]], model)[0].tolist()
@@ -99,9 +103,9 @@ def main():
                 try:
                     rows = run()
                 except Exception as e:
-                    method_available[store][method] = False
-                    if q is queries[0]:
-                        common.safe_print(f"  ({store}/{method} unavailable: {str(e)[:80]})")
+                    errors[store][method] += 1
+                    if not first_err[store][method]:
+                        first_err[store][method] = str(e)[:90].encode("ascii", "replace").decode("ascii")
                     continue
                 for k in KS:
                     results[store][method][k].append(_hit(rows, expect, k))
@@ -114,35 +118,45 @@ def main():
     safe(header)
     safe("-" * len(header))
 
-    regressions = []
+    regressions, partial = [], []
     for store in results:
         n = len(by_store[store])
-        per_method_at = {}
-        for method in ("vector", "fts", "hybrid"):
-            if not method_available[store][method]:
+        rec_at = {}
+        for method in methods:
+            ran = len(results[store][method][KS[0]])
+            errcnt = errors[store][method]
+            if ran == 0:
+                # never produced a result -> structurally unavailable (e.g. no FTS index)
+                if errcnt:
+                    safe(f"{store:<10} {n:>3} {method:<7} (unavailable: {first_err[store][method]})")
                 continue
             cells = []
             for k in KS:
-                hits = results[store][method][k]
-                rec = sum(hits) / len(hits) if hits else 0.0
-                per_method_at[(method, k)] = rec
+                rec = sum(results[store][method][k]) / ran
+                rec_at[(method, k)] = rec
                 cells.append(f"{rec:<7.2f}")
-            safe(f"{store:<10} {n:>3} {method:<7} " + " ".join(cells))
-        # ship-gate check: where hybrid is available it must not lose to vector
-        if method_available[store]["hybrid"]:
-            for k in KS:
-                h = per_method_at.get(("hybrid", k))
-                v = per_method_at.get(("vector", k))
-                if h is not None and v is not None and h + 1e-9 < v:
-                    regressions.append(f"{store} r@{k}: hybrid {h:.2f} < vector {v:.2f}")
+            note = ""
+            if errcnt:
+                # ran on some, errored on others: a real problem, not "unavailable".
+                note = f"  [!] errored on {errcnt}/{n} (recall over {ran} ok)"
+                if method == "hybrid":
+                    partial.append(f"{store}: hybrid errored on {errcnt}/{n} queries ({first_err[store][method]})")
+            safe(f"{store:<10} {n:>3} {method:<7} " + " ".join(cells) + note)
+        # ship-gate: where both ran, hybrid must not lose to vector
+        for k in KS:
+            h, v = rec_at.get(("hybrid", k)), rec_at.get(("vector", k))
+            if h is not None and v is not None and h + 1e-9 < v:
+                regressions.append(f"{store} r@{k}: hybrid {h:.2f} < vector {v:.2f}")
         safe("")
 
-    if regressions:
-        safe("VERDICT: hybrid REGRESSED vs vector — do NOT ship hybrid as-is:")
+    if regressions or partial:
+        safe("VERDICT: NOT safe to ship hybrid as-is:")
         for r in regressions:
-            safe(f"  - {r}")
+            safe(f"  - REGRESSION: {r}")
+        for p in partial:
+            safe(f"  - PARTIAL FAILURE: {p}")
         return 1
-    safe("VERDICT: hybrid >= vector wherever FTS is available (safe to ship hybrid).")
+    safe("VERDICT: hybrid >= vector wherever FTS is available, with no per-query errors (safe to ship hybrid).")
     return 0
 
 

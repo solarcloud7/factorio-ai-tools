@@ -2,7 +2,8 @@
 
 This is the generalized successor of the old per-mod Lua ingester: one store,
 table ``codebase``, holding many repos distinguished by the ``repo_url`` column
-(the repo basename). Code-aware chunking via tree-sitter for TypeScript/JS and
+(the ``owner/repo`` slug for ``--repo-url`` clones, the basename for
+``--local-path``). Code-aware chunking via tree-sitter for TypeScript/JS and
 Lua; everything else is line-window text-chunked. Incremental by per-file
 SHA-256 keyed on (repo_url, file_path): unchanged files are skipped, changed
 files are deleted-then-re-added (so re-running no longer duplicates rows).
@@ -118,6 +119,20 @@ def main():
 
     safe_repo = repo_url.replace("'", "''")
 
+    # One-time key migration: pre-PR builds stored repo_url as the bare basename
+    # ('factorio-data'); this PR keys by the owner/repo slug ('wube/factorio-data').
+    # Without cleanup an incremental re-ingest over an old store would leave the
+    # basename-keyed rows as stale duplicates (the slug-scoped orphan reconcile
+    # never matches them, and the unchanged schema means ensure_table won't drop).
+    # So when the slug differs from the basename, drop any old basename-keyed rows
+    # for this repo once. (A repo previously ingested via --local-path under that
+    # same basename is the lone edge case; re-run --local-path to restore it.)
+    if not dry and has_rows and repo_url != repo_name:
+        old_key = repo_name.replace("'", "''")
+        if table.search().where(f"repo_url = '{old_key}'").limit(1).to_list():
+            common.safe_print(f"Migrating: dropping stale basename-keyed rows (repo_url='{repo_name}').")
+            table.delete(f"repo_url = '{old_key}'")
+
     batch = []
     batch_size = 50
     total_chunks = 0
@@ -180,6 +195,7 @@ def main():
 
             file_chunks, nstats = common.normalize_chunks(chunk_file(src_bytes, ext))
             auditor.note_dups(nstats["dropped_dup"])
+            auditor.note_tiny(nstats["dropped_tiny"])
             if len(file_chunks) > common.MAX_CHUNKS_PER_FILE:
                 common.safe_print(f"Skipping bulk file {rel_path} ({len(file_chunks)} chunks).")
                 auditor.note_skipped_file(rel_path, len(file_chunks))

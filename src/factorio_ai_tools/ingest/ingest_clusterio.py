@@ -79,6 +79,13 @@ def main():
     skipped_count = 0
     seen_paths = set()  # every current file -> orphan reconcile after the loop
     for f in all_files:
+        # Store a clean repo-relative path (e.g. plugins/player_auth/..., not
+        # ./clusterio\plugins\...) so results read well and per-plugin filtering works.
+        rel_path = common.to_posix(os.path.relpath(f, repo_path))
+        # Record the path BEFORE the read so a transient OSError (lock/AV scan) does
+        # not drop a still-present file from seen_paths and let the orphan reconcile
+        # delete its existing rows. Matches ingest_github_repo's ordering.
+        seen_paths.add(rel_path)
         try:
             with open(f, 'rb') as file:
                 content_bytes = file.read()
@@ -86,10 +93,6 @@ def main():
         except OSError:
             continue
 
-        # Store a clean repo-relative path (e.g. plugins/player_auth/..., not
-        # ./clusterio\plugins\...) so results read well and per-plugin filtering works.
-        rel_path = common.to_posix(os.path.relpath(f, repo_path))
-        seen_paths.add(rel_path)
         safe_f = rel_path.replace("'", "''")
         if table is not None and len(table) > 0:
             existing = table.search().where(f"file_path = '{safe_f}'").limit(1).to_list()
@@ -112,6 +115,7 @@ def main():
         # losing one file's rows entirely.
         file_chunks, nstats = common.normalize_chunks(file_chunks, content_key="content")
         auditor.note_dups(nstats["dropped_dup"])
+        auditor.note_tiny(nstats["dropped_tiny"])
         if len(file_chunks) > common.MAX_CHUNKS_PER_FILE:
             common.safe_print(f"Skipping bulk file {rel_path} ({len(file_chunks)} chunks).")
             auditor.note_skipped_file(rel_path, len(file_chunks))
@@ -122,9 +126,13 @@ def main():
     # Orphan reconcile: drop rows for files removed from the checkout since the
     # last run. Guarded on a non-empty set so a misconfigured CLUSTERIO_REPO
     # (zero files) can't wipe the whole store.
+    orphans_removed = False
     if table is not None and len(table) > 0 and seen_paths:
         quoted = ", ".join("'" + p.replace("'", "''") + "'" for p in sorted(seen_paths))
-        table.delete(f"file_path NOT IN ({quoted})")
+        orphan_where = f"file_path NOT IN ({quoted})"
+        if table.search().where(orphan_where).limit(1).to_list():
+            table.delete(orphan_where)
+            orphans_removed = True
 
     common.safe_print(f"Skipped {skipped_count} unchanged files.")
     common.safe_print(f"Extracted {len(all_chunks)} new/modified chunks.")
@@ -135,7 +143,17 @@ def main():
     if dry:
         return
     if len(all_chunks) == 0:
-        common.safe_print("Database is perfectly up to date!")
+        # No new/changed chunks — but if orphans were deleted, the FTS index still
+        # references them, so rebuild it before returning (repo ingester rebuilds
+        # unconditionally; clusterio's early return must not skip it).
+        if orphans_removed:
+            common.safe_print("Removed orphaned rows; rebuilding FTS index.")
+            try:
+                table.create_fts_index("content", replace=True)
+            except Exception as e:
+                common.safe_print(f"FTS index skipped: {e}")
+        else:
+            common.safe_print("Database is perfectly up to date!")
         _write_version(repo_path, db_path)
         return
 
