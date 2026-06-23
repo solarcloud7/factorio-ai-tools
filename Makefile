@@ -1,4 +1,4 @@
-.PHONY: help sync compact ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos package-dbs deploy-dbs test eval mcp
+.PHONY: help sync compact ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos package-dbs deploy-dbs test eval smoke mcp
 
 # Latest GitHub release tag; override with `make deploy-dbs TAG=vX.Y.Z`.
 TAG ?= $(shell gh release view --json tagName -q .tagName)
@@ -17,6 +17,7 @@ help:
 	@echo "  make deploy-dbs    - Compact, package, and upload the final build to the latest release"
 	@echo "  make test          - Run the offline test suite (chunk-health strict)"
 	@echo "  make eval          - Retrieval recall@k: vector vs FTS vs hybrid (after re-ingest)"
+	@echo "  make smoke         - Release smoke test: install published wheel, fresh download, assert tools"
 	@echo "  make mcp           - Start the MCP server"
 
 ingest-factorio:
@@ -77,6 +78,13 @@ test:
 # stores). The ship-gate for hybrid search; run after a re-ingest. Not in CI.
 eval:
 	$(PY) maintenance/eval_retrieval.py
+
+# Release smoke test: install the PUBLISHED wheel into an isolated venv, force a
+# fresh DB download from the latest release, and assert every tool. Run AFTER a
+# release+deploy. `make smoke VERSION=1.2.0` pins a version; default = PyPI latest.
+# `make smoke LOCAL=1` runs the same checks against local code+data (fast).
+smoke:
+	$(PY) maintenance/smoke_release.py $(if $(VERSION),--version $(VERSION),) $(if $(LOCAL),--local,)
 
 mcp:
 	.\start_mcp_server.bat
