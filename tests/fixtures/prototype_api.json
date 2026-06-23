@@ -1,0 +1,14 @@
+{
+  "prototypes": [
+    {
+      "name": "furnace",
+      "description": "A furnace prototype.",
+      "properties": [
+        {"name": "crafting_speed", "description": "How fast it crafts.", "type": "double"}
+      ]
+    }
+  ],
+  "types": [
+    {"name": "ItemID", "description": "The name of an item prototype.", "type": "string"}
+  ]
+}

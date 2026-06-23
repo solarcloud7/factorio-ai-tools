@@ -13,3 +13,15 @@ dist/
 # Local Data
 data/
 .venv/
+
+# Clusterio checkout cloned by `make ingest-clusterio` (default CLUSTERIO_REPO)
+/clusterio/
+
+# Build/deploy artifact produced by `make package-dbs` / `make deploy-dbs`
+factorio_lancedb.zip
+
+# pytest
+.pytest_cache/
+
+# local re-ingest log
+.reingest.log

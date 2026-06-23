@@ -1,0 +1,27 @@
+{
+  "classes": [
+    {
+      "name": "LuaEntity",
+      "description": "An in-game entity.",
+      "methods": [
+        {
+          "name": "teleport",
+          "description": "Teleport the entity.",
+          "parameters": [
+            {"name": "position", "type": "Position", "description": "Target position."}
+          ],
+          "return_values": [{"type": "boolean"}]
+        }
+      ],
+      "attributes": [
+        {"name": "health", "description": "The entity's health.", "type": "double"}
+      ]
+    }
+  ],
+  "events": [
+    {"name": "on_tick", "description": "Fires every tick.", "data": []}
+  ],
+  "concepts": [
+    {"name": "Position", "description": "A coordinate pair.", "type": "table"}
+  ]
+}

@@ -1,0 +1,30 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.11
+
+      - name: Sync dependencies (incl. dev group)
+        run: uv sync --group dev
+
+      # The suite is offline (a fake embedder + local fixtures: no model download,
+      # no network). Strict mode makes any chunk-health FAIL abort the run, so a
+      # regression that reintroduces silent chunking pathology breaks CI.
+      - name: Run tests (strict chunk-health)
+        env:
+          FACTORIO_MCP_STRICT_CHUNKS: "1"
+        run: uv run --no-sync python -m pytest -q

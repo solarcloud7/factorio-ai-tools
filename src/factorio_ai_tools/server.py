@@ -8,6 +8,8 @@ import torch
 from sentence_transformers import SentenceTransformer
 from mcp.server.fastmcp import FastMCP
 
+from factorio_ai_tools.ingest import common
+
 # Define tool version
 TOOL_VERSION = "1.0.0"
 
@@ -41,8 +43,6 @@ def optional_tool():
     return decorator
 
 import urllib.request
-import zipfile
-import shutil
 
 # Determine if we are running locally (git/docker) or via PyPI/uvx
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -54,22 +54,21 @@ if os.path.exists(LOCAL_DATA_DIR) or os.getenv("FACTORIO_MCP_LOCAL_MODE"):
 else:
     DATA_DIR = USER_DATA_DIR
 
+# The release asset (factorio_lancedb.zip) bundles all of these; the bootstrap
+# only short-circuits when every one is already present, so a partial extract
+# (e.g. repo_lancedb alone) still triggers a re-download.
+ALL_STORES = ["factorio_lancedb", "clusterio_lancedb", "wiki_lancedb", "forum_lancedb", "repo_lancedb"]
+
 def ensure_databases():
-    if os.path.exists(os.path.join(DATA_DIR, "factorio_lancedb")):
+    missing = [s for s in ALL_STORES if not os.path.exists(os.path.join(DATA_DIR, s))]
+    if not missing:
         return
-        
-    os.makedirs(DATA_DIR, exist_ok=True)
-    print(f"Databases not found locally. Downloading to {DATA_DIR}...", file=sys.stderr)
+    print(f"Databases missing {missing}; downloading to {DATA_DIR}...", file=sys.stderr)
     url = "https://github.com/solarcloud7/factorio-ai-tools/releases/latest/download/factorio_lancedb.zip"
-    zip_path = os.path.join(DATA_DIR, "databases.zip")
-    
     try:
-        urllib.request.urlretrieve(url, zip_path)
-        print("Extracting databases...", file=sys.stderr)
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(DATA_DIR)
-        os.remove(zip_path)
-        print("Databases successfully installed!", file=sys.stderr)
+        # Extracts ONLY the missing stores so a hand-built data/ is never clobbered.
+        added = common.ensure_stores(DATA_DIR, ALL_STORES, url=url)
+        print(f"Databases installed: {added}", file=sys.stderr)
     except Exception as e:
         print(f"Failed to download databases: {e}", file=sys.stderr)
 
@@ -113,6 +112,13 @@ except Exception as e:
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model_name = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
 model = SentenceTransformer(model_name, device=device)
+
+# Hybrid retrieval (RRF over the ingest-built FTS index + vector) lives in
+# common.hybrid_search so the server and the offline tests share one
+# implementation. Validated by maintenance/eval_retrieval.py: hybrid >= vector on
+# the golden set everywhere FTS exists. Stores with no FTS index (forum) fall back
+# to pure vector; a transient/query-specific error falls back for that query only.
+hybrid_search = common.hybrid_search
 
 @optional_tool()
 def get_mcp_version_info() -> str:
@@ -190,20 +196,17 @@ def search_factorio_docs(queries: list[str], class_filter: str = None, limit: in
         all_formatted_chunks = []
         
         for idx, query_vec in enumerate(query_vecs):
-            q = table_factorio.search(query_vec.tolist())
-            
             conditions = []
             if class_filter:
                 safe_class = class_filter.replace("'", "''")
                 conditions.append(f"class_name = '{safe_class}'")
-            
+
             ver = factorio_version if factorio_version not in ("latest", "") else "latest"
             safe_ver = ver.replace("'", "''")
             conditions.append(f"version = '{safe_ver}'")
-            
-            q = q.where(" AND ".join(conditions))
-                
-            results = q.limit(limit).to_list()
+
+            results = hybrid_search(table_factorio, queries[idx], query_vec, limit,
+                                    where=" AND ".join(conditions))
             
             all_formatted_chunks.append(f"### Results for query: '{queries[idx]}'")
             
@@ -221,13 +224,14 @@ def search_factorio_docs(queries: list[str], class_filter: str = None, limit: in
         return f"Error executing search: {str(e)}"
 
 @optional_tool()
-def search_clusterio_code(queries: list[str], node_type: str = None, limit: int = 5) -> str:
+def search_clusterio_code(queries: list[str], node_type: str = None, plugin: str = None, limit: int = 5) -> str:
     """
     Search the Clusterio TypeScript codebase using semantic AST-chunked RAG.
-    
+
     Args:
         queries: A list of semantic search queries to batch process.
-        node_type: Optional AST node type filter ('class_declaration', 'function_declaration', 'method_definition', 'interface_declaration', 'text_file').
+        node_type: Optional AST node-type filter. Code nodes: 'class', 'interface', 'function', 'method' (TypeScript), 'table' (Lua); fallbacks: 'text_chunk' (uncapturable code lines), 'text_file' (non-code files).
+        plugin: Optional plugin/package name to scope the search to one component, matched against the file path (e.g. 'subspace_storage', 'player_auth', 'inventory_sync', 'controller').
         limit: Maximum number of chunks to return per query (default 5, max 20).
     """
     if table_clusterio is None:
@@ -245,13 +249,16 @@ def search_clusterio_code(queries: list[str], node_type: str = None, limit: int 
         all_formatted_chunks = []
         
         for idx, query_vec in enumerate(query_vecs):
-            q = table_clusterio.search(query_vec.tolist())
-            
+            conditions = []
             if node_type:
                 safe_node = node_type.replace("'", "''")
-                q = q.where(f"node_type = '{safe_node}'")
-                
-            results = q.limit(limit).to_list()
+                conditions.append(f"node_type = '{safe_node}'")
+            if plugin:
+                # Escaped LIKE so 'player_auth' can't match 'player1auth' (_ wildcard).
+                conditions.append(common.like_filter("file_path", plugin))
+
+            results = hybrid_search(table_clusterio, queries[idx], query_vec, limit,
+                                    where=" AND ".join(conditions) if conditions else None)
             
             all_formatted_chunks.append(f"### Results for query: '{queries[idx]}'")
             
@@ -299,8 +306,7 @@ def search_factorio_wiki(queries: list[str], limit: int = 5) -> str:
         all_formatted_chunks = []
         
         for idx, query_vec in enumerate(query_vecs):
-            q = table_wiki.search(query_vec.tolist())
-            results = q.limit(limit).to_list()
+            results = hybrid_search(table_wiki, queries[idx], query_vec, limit)
             
             all_formatted_chunks.append(f"### Wiki Results for query: '{queries[idx]}'")
             
@@ -342,8 +348,7 @@ def search_factorio_forums(queries: list[str], limit: int = 5) -> str:
         all_formatted_chunks = []
         
         for idx, query_vec in enumerate(query_vecs):
-            q = table_forum.search(query_vec.tolist())
-            results = q.limit(limit).to_list()
+            results = hybrid_search(table_forum, queries[idx], query_vec, limit)
             
             all_formatted_chunks.append(f"### Forum Results for query: '{queries[idx]}'")
             
@@ -461,13 +466,8 @@ def search_github_code(queries: list[str], repo_name: str = None, limit: int = 5
         all_formatted_chunks = []
         
         for idx, query_vec in enumerate(query_vecs):
-            q = table_repo.search(query_vec.tolist())
-            
-            if repo_name:
-                safe_repo = repo_name.replace("'", "''")
-                q = q.where(f"repo_url LIKE '%{safe_repo}%'")
-                
-            results = q.limit(limit).to_list()
+            where = common.like_filter("repo_url", repo_name) if repo_name else None
+            results = hybrid_search(table_repo, queries[idx], query_vec, limit, where=where)
             
             all_formatted_chunks.append(f"### Results for query: '{queries[idx]}'")
             
