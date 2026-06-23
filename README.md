@@ -19,6 +19,8 @@ This project consists of five ingestion pipelines (sharing `ingest/common.py` fo
 5. **Generic GitHub Repos (`ingest_github_repo.py` → `repo_lancedb`)**: Clones and AST-parses (tree-sitter TypeScript/JS + Lua) any GitHub repository — base game data, libraries, or any mod — into one shared, multi-repo index.
 6. **FastMCP Server (`server.py`)**: The bridge that connects the underlying LanceDB vector stores to an LLM via the standard Model Context Protocol.
 
+For developer reference — module layout, the store schemas, the MCP tool list, and the validation playbook — see **[docs/](docs/README.md)**.
+
 ## Setup & Usage
 
 There are two primary ways to install and use this MCP server locally with Claude Desktop (or any other MCP client):
