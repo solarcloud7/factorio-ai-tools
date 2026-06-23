@@ -275,8 +275,12 @@ class ChunkAuditor:
             )
 
     def note_source(self, source, n_bytes, n_chunks):
-        """Flag a non-empty source file/page that yielded zero chunks (silent loss)."""
-        if n_bytes > 0 and n_chunks == 0:
+        """Flag a source that yielded zero chunks despite having enough content to
+        expect one (the silent-loss bug, e.g. a real Lua file whose AST captured
+        only ``{}``). A file smaller than ``min_chars`` legitimately produces no
+        chunk — flagging it is a false positive (4-byte JSON test fixtures), so the
+        check is gated on ``n_bytes >= min_chars``."""
+        if n_bytes >= self.min_chars and n_chunks == 0:
             self._empty_sources.append((source, n_bytes))
 
     def note_dups(self, n):
@@ -496,9 +500,11 @@ _LUA_QUERY = """
 (table_constructor) @table
 """
 
-# Every node_type any chunker can emit. The capture names above ('class',
-# 'interface', 'function', 'method', 'table') plus the non-AST fallbacks. Stays
-# the single source of truth for the server filter docstring and the gate test.
+# node_types the CODE chunkers (clusterio + repo) emit: the tree-sitter capture
+# names ('class', 'interface', 'function', 'method', 'table') plus the non-AST
+# fallbacks. Single source of truth for the server filter docstring and the gate
+# test. (The factorio doc ingester parses an API schema, not source, so it has its
+# own vocab — 'prototype_property', 'attribute', 'event', ... — not listed here.)
 NODE_TYPES = frozenset({
     "class", "interface", "function", "method", "table",  # tree-sitter captures
     "node",         # a captured node with no specific capture name

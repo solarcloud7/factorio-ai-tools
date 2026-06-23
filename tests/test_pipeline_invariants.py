@@ -172,6 +172,17 @@ def test_noop_reingest_writes_zero(mini_repo, tmp_data_dir, fake_embedder, monke
     assert t2.count_rows() == n1, "a no-op re-ingest changed the row count"
 
 
+def test_zero_chunk_flag_ignores_subminchar_sources():
+    """The zero-chunk FAIL must fire for a substantial source that produced nothing
+    (real silent loss) but NOT for a file too small to ever yield a chunk (4-byte
+    JSON test fixtures) — else the gate false-fails on the real clusterio corpus."""
+    a = common.ChunkAuditor("t", strict=False)
+    a.note_source("tiny.json", n_bytes=4, n_chunks=0)     # below min_chars: legit 0
+    a.note_source("real.lua", n_bytes=2000, n_chunks=0)   # substantial: silent loss
+    stats = a.summary()
+    assert {s for s, _ in stats["empty_sources"]} == {"real.lua"}
+
+
 def test_ensure_stores_does_not_overwrite_existing(tmp_path):
     """Bootstrap must extract ONLY missing stores, never clobber a hand-built data/."""
     import shutil
