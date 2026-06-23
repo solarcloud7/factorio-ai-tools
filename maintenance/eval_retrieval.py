@@ -27,7 +27,9 @@ STORE_MAP = {
     "repo": ("repo_lancedb", "codebase", "content"),
 }
 
-KS = (5, 10)
+# Report fine-grained ks too: on a small corpus recall@10 saturates at 1.00 for
+# every method (no headroom), so @1/@3 are where vector vs hybrid actually differ.
+KS = (1, 3, 5, 10)
 GOLDEN = os.path.join(os.path.dirname(__file__), "..", "tests", "golden", "queries.yaml")
 
 
