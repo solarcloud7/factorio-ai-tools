@@ -1,0 +1,66 @@
+# Golden retrieval set for `make eval` (docs/rag-pipeline-playbook.md §5).
+#
+# Each entry is a query with a distinctive `expect` substring that a RELEVANT
+# top-k result should contain (matched case-insensitively against all string
+# fields of the row). The point is a RELATIVE comparison — vector vs BM25/FTS vs
+# hybrid recall@k on the SAME queries — not an absolute correctness score.
+#
+# Includes the code-review regression cases: a recipe in the vanilla data repo, a
+# specific Clusterio plugin file, an oversized-doc Factorio class.
+#
+# Stores with an FTS index (factorio, clusterio, repo) get all three methods;
+# stores without (wiki, forum) report vector-only.
+
+queries:
+  # --- Factorio API docs (factorio_lancedb / docs, FTS on `text`) ---
+  - store: factorio
+    query: "how do I teleport an entity to a new position"
+    expect: "teleport"
+  - store: factorio
+    query: "create an entity on a surface at runtime"
+    expect: "create_entity"
+  - store: factorio
+    query: "recipe prototype ingredients and results definition"
+    expect: "recipeprototype"
+  - store: factorio
+    query: "event fired when a player builds an entity"
+    expect: "on_built_entity"
+  - store: factorio
+    query: "read the item contents of an inventory"
+    expect: "get_contents"
+  - store: factorio
+    query: "all properties and methods of a game entity"
+    expect: "luaentity"
+
+  # --- Clusterio TypeScript/Lua (clusterio_lancedb / codebase, FTS on `content`) ---
+  - store: clusterio
+    query: "player authentication and login tokens"
+    expect: "player_auth"
+  - store: clusterio
+    query: "subspace storage item import and export between servers"
+    expect: "subspace_storage"
+  - store: clusterio
+    query: "synchronize player inventories across instances"
+    expect: "inventory_sync"
+
+  # --- Vanilla data + mods (repo_lancedb / codebase, FTS on `content`) ---
+  - store: repo
+    query: "iron plate smelting recipe"
+    expect: "iron-plate"
+  - store: repo
+    query: "assembling machine crafting entity"
+    expect: "assembling-machine"
+  - store: repo
+    query: "electric mining drill that mines ore"
+    expect: "electric-mining-drill"
+  - store: repo
+    query: "steam engine that generates electricity"
+    expect: "steam-engine"
+
+  # --- Wiki (wiki_lancedb / docs, vector-only — no FTS index) ---
+  - store: wiki
+    query: "how fast does a transport belt move items"
+    expect: "transport belt"
+  - store: wiki
+    query: "steam engine power output"
+    expect: "steam engine"

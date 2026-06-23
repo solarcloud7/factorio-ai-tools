@@ -22,3 +22,6 @@ factorio_lancedb.zip
 
 # pytest
 .pytest_cache/
+
+# local re-ingest log
+.reingest.log

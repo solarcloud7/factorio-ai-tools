@@ -1,4 +1,4 @@
-.PHONY: help sync compact ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos package-dbs deploy-dbs test mcp
+.PHONY: help sync compact ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos package-dbs deploy-dbs test eval mcp
 
 # Latest GitHub release tag; override with `make deploy-dbs TAG=vX.Y.Z`.
 TAG ?= $(shell gh release view --json tagName -q .tagName)
@@ -16,6 +16,7 @@ help:
 	@echo "  make package-dbs   - Zip the 5 stores into factorio_lancedb.zip"
 	@echo "  make deploy-dbs    - Compact, package, and upload the final build to the latest release"
 	@echo "  make test          - Run the offline test suite (chunk-health strict)"
+	@echo "  make eval          - Retrieval recall@k: vector vs FTS vs hybrid (after re-ingest)"
 	@echo "  make mcp           - Start the MCP server"
 
 ingest-factorio:
@@ -71,6 +72,11 @@ sync:
 
 test:
 	$(PY) -m pytest -q
+
+# Retrieval recall@k on the golden set: vector vs FTS vs hybrid (real model + live
+# stores). The ship-gate for hybrid search; run after a re-ingest. Not in CI.
+eval:
+	$(PY) maintenance/eval_retrieval.py
 
 mcp:
 	.\start_mcp_server.bat
