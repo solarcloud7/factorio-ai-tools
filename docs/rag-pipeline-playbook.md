@@ -31,6 +31,17 @@ pass**; dry-run all-green on the real corpus; one GPU re-ingest + compact done.
 guard; §3.4 wiki `/` subpage filter, factorio version-orphan, forum non-atomic
 delete. Not introduced by recent work; tracked here for the next cut.
 
+**Second review pass (2026-06-23):** a 46-agent code review of the branch found 1
+high + 7 medium + lows — all CONFIRMED, all fixed before merge (shipped data was
+already clean, so these were code/feature/test fixes, no re-ingest): repo_url
+key-migration cleanup (stale basename rows on incremental re-ingest); hybrid
+`_NO_HYBRID` no longer poisoned by a transient/query error (only a genuinely
+missing FTS index is cached); multi-line-import-aware coverage; eval ship-gate now
+FAILs on partial hybrid errors; `hybrid_search` moved to `common` with offline
+tests; clusterio `seen_paths` ordering + delete-only FTS rebuild; restored
+tiny-dropped visibility. **64 offline tests pass.** Treating the review as a second
+measurement before the irreversible cut is the §1 lesson applied.
+
 **Measured, not assumed (hybrid):** the eval ship-gate showed hybrid **==** vector
 on the golden set (vector already near-saturated; FTS-alone worse on prose). It
 never *beats* vector here — shipping was a deliberate call (best-practice + free
