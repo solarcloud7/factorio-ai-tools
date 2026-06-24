@@ -1,19 +1,20 @@
 FROM python:3.11-slim
 
-# Install git for any tree-sitter or fetching dependencies
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Copy requirements first to leverage Docker cache
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml uv.lock ./
+COPY src/ ./src/
 
-# Copy all python scripts and LanceDB vector databases
-COPY . .
+RUN uv sync --no-dev --frozen --no-cache
 
-# Ensure the mcp server binds to stdio properly and PYTHONPATH is set for the src layout
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app/src
+ENV HF_HOME=/cache/huggingface
+ENV PATH="/app/.venv/bin:$PATH"
 
-ENTRYPOINT ["python", "-m", "factorio_ai_tools.server"]
+EXPOSE 8000
+
+ENTRYPOINT ["factorio-ai-tools", "--sse", "--port", "8000"]

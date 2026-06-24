@@ -1,4 +1,4 @@
-.PHONY: help sync compact ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos package-dbs deploy-dbs test eval smoke mcp
+.PHONY: help sync compact ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos package-dbs deploy-dbs test eval smoke mcp inspect
 
 # Latest GitHub release tag; override with `make deploy-dbs TAG=vX.Y.Z`.
 TAG ?= $(shell gh release view --json tagName -q .tagName)
@@ -18,7 +18,8 @@ help:
 	@echo "  make test          - Run the offline test suite (chunk-health strict)"
 	@echo "  make eval          - Retrieval recall@k: vector vs FTS vs hybrid (after re-ingest)"
 	@echo "  make smoke         - Release smoke test: install published wheel, fresh download, assert tools"
-	@echo "  make mcp           - Start the MCP server"
+	@echo "  make mcp           - Start the MCP server over SSE (port 8000)"
+	@echo "  make inspect       - Launch MCP Inspector (stdio; self-contained)"
 
 ingest-factorio:
 	$(PY) -m factorio_ai_tools.ingest.ingest_factorio
@@ -88,3 +89,6 @@ smoke:
 
 mcp:
 	.\start_mcp_server.bat
+
+inspect:
+	npx --yes @modelcontextprotocol/inspector uv run factorio-ai-tools

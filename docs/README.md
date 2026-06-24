@@ -10,7 +10,7 @@ it.
 | [architecture.md](architecture.md) | The modules, the ingest → LanceDB → server data flow, and the shared contracts every part must honor. |
 | [stores.md](stores.md) | The five LanceDB stores: table names, schemas, key columns, and FTS indexes. |
 | [tools.md](tools.md) | The MCP tools and prompt the server exposes — signatures, behavior, and which store each queries. |
-| [rag-pipeline-playbook.md](rag-pipeline-playbook.md) | The *why*: validation gates, the lessons behind them, and the measure-once dry-run protocol. |
+| [rag-pipeline-playbook.md](rag-pipeline-playbook.md) | Validation gates, the dry-run protocol, and known limitations for the ingest pipeline. |
 
 Project-level guidance lives at the repo root:
 

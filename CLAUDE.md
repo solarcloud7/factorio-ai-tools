@@ -32,6 +32,9 @@ uv run python maintenance/compact_lancedb.py --check
 
 # Run the MCP server (stdio transport)
 uv run factorio-ai-tools          # or: uv run python -m factorio_ai_tools.server
+
+# Run the MCP server over SSE (port 8000) — the canonical way via the Makefile:
+make mcp                          # or: uv run factorio-ai-tools --sse --port 8000
 ```
 
 ```powershell
@@ -43,7 +46,7 @@ make test                          # or: uv run python -m pytest -q
 make eval                          # or: uv run python maintenance/eval_retrieval.py
 ```
 
-There is an offline pytest suite (`tests/`, run via `make test`) and a local-only retrieval eval (`make eval`, golden set at `tests/golden/queries.yaml`); there is no linter or build step beyond the above. `smithery.yaml` defines the Smithery deployment (build = install deps + run the ingest scripts; run = the server). The validation philosophy and defect history live in `docs/rag-pipeline-playbook.md` (measure-twice gates, §3 defect register, hybrid ship-decision).
+There is an offline pytest suite (`tests/`, run via `make test`) and a local-only retrieval eval (`make eval`, golden set at `tests/golden/queries.yaml`); there is no linter or build step beyond the above. `smithery.yaml` defines the Smithery deployment (build = install deps + run the ingest scripts; run = the server). Validation gates, the dry-run protocol, and known limitations live in `docs/rag-pipeline-playbook.md`.
 
 To test a tool manually, import `factorio_ai_tools.server` in a REPL — the `@mcp.tool()` functions are plain callables. Note that importing it eagerly loads the SentenceTransformer model and opens all five LanceDB connections (factorio / clusterio / wiki / forum / repo).
 
