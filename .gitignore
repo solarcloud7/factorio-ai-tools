@@ -17,6 +17,9 @@ data/
 # Clusterio checkout cloned by `make ingest-clusterio` (default CLUSTERIO_REPO)
 /clusterio/
 
+# factorio-data checkout cloned by `make ingest-prototypes` (FACTORIO_DATA_REPO)
+/factorio-data/
+
 # Build/deploy artifact produced by `make package-dbs` / `make deploy-dbs`
 factorio_lancedb.zip
 

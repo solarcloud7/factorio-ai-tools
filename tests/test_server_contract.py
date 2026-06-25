@@ -13,6 +13,15 @@ from factorio_ai_tools.ingest import (
     ingest_wiki,
 )
 
+# The prototypes drift guard needs luaparser. Guard ONLY this import: a module-level
+# importorskip would skip the whole module, silently dropping the drift guards for
+# the five core stores too. With this, the five core guards always run; the
+# prototypes entry is added to CONTRACT only when luaparser is available.
+try:
+    from factorio_ai_tools.ingest import ingest_prototypes
+except Exception:  # luaparser not installed — run `uv sync` first
+    ingest_prototypes = None
+
 SERVER = os.path.join(os.path.dirname(__file__), "..", "src", "factorio_ai_tools", "server.py")
 
 # Columns server.py reads or filters on, per store -> the ingest schema MUST cover them.
@@ -23,6 +32,9 @@ CONTRACT = {
     "forum": (ingest_forum.SCHEMA, {"content", "class_name", "file_path"}),
     "repo": (ingest_github_repo.SCHEMA, {"content", "repo_url", "file_path", "node_type", "node_name"}),
 }
+if ingest_prototypes is not None:
+    CONTRACT["prototypes"] = (ingest_prototypes.PrototypeRecord,
+                              {"prototype_type", "prototype_name", "category", "content", "version", "content_hash"})
 
 
 def test_schemas_cover_server_reads():
@@ -39,6 +51,7 @@ def test_server_exposes_a_search_tool_per_store():
         "search_factorio_forums",
         "search_clusterio_code",
         "search_github_code",
+        "search_factorio_prototypes",
     ]:
         assert f"def {fn}(" in src, f"server.py is missing search tool {fn}"
 

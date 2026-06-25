@@ -1,17 +1,20 @@
-.PHONY: help sync compact ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos package-dbs deploy-dbs test eval smoke mcp inspect
+.PHONY: help sync compact ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos ingest-prototypes package-dbs deploy-dbs test eval smoke mcp inspect
 
 # Latest GitHub release tag; override with `make deploy-dbs TAG=vX.Y.Z`.
 TAG ?= $(shell gh release view --json tagName -q .tagName)
 
 PY = uv run --no-sync python
 
-# The 5 distinct-schema stores, in the order ingest-all builds them.
+# The release/package set: the 5 stores bundled into factorio_lancedb.zip. This
+# MUST mirror server.py's RELEASE_STORES — prototypes_lancedb is built separately
+# (ingest-prototypes) and is deliberately NOT in the zip, so it's excluded here so
+# package-dbs/deploy-dbs don't ship a store the server never extracts.
 STORES = factorio_lancedb clusterio_lancedb wiki_lancedb forum_lancedb repo_lancedb
 
 help:
 	@echo "Available commands:"
 	@echo "  make sync          - Install deps; auto-select CUDA torch if an NVIDIA GPU is present"
-	@echo "  make ingest-all    - (Re)build all 5 LanceDB stores (incremental/idempotent)"
+	@echo "  make ingest-all    - (Re)build all 6 LanceDB stores (incremental/idempotent)"
 	@echo "  make compact       - Compact/finalize every data/*_lancedb store"
 	@echo "  make package-dbs   - Zip the 5 stores into factorio_lancedb.zip"
 	@echo "  make deploy-dbs    - Compact, package, and upload the final build to the latest release"
@@ -45,7 +48,11 @@ ingest-repos:
 	$(PY) -m factorio_ai_tools.ingest.ingest_github_repo --repo-url https://github.com/Teoxoy/factorio-blueprint-editor.git
 	$(PY) -m factorio_ai_tools.ingest.ingest_github_repo --repo-url https://github.com/notnotmelon/maraxsis.git
 
-ingest-all: ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos
+ingest-prototypes:
+	$(PY) -c "import os,subprocess as s; s.run(['git','clone','--depth','1','https://github.com/wube/factorio-data.git','factorio-data'],check=True) if not os.path.exists('factorio-data') else print('factorio-data checkout present')"
+	$(PY) -m factorio_ai_tools.ingest.ingest_prototypes
+
+ingest-all: ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos ingest-prototypes
 
 compact:
 	$(PY) maintenance/compact_lancedb.py
