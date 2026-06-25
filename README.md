@@ -11,13 +11,14 @@ A lightning-fast, hybrid-search Vector Database and Model Context Protocol (MCP)
 
 ## Architecture
 
-This project consists of five ingestion pipelines (sharing `ingest/common.py` for the embedding, hashing, and tree-sitter contract) feeding five LanceDB vector stores, plus the MCP server:
+This project consists of six ingestion pipelines (sharing `ingest/common.py` for the embedding, hashing, and tree-sitter contract) feeding six LanceDB vector stores, plus the MCP server:
 1. **Factorio Docs (`ingest_factorio.py` → `factorio_lancedb`)**: Scrapes the official Lua API documentation and Data Phase Prototypes across multiple versions (`1.1.110` and `latest`).
 2. **Factorio Wiki (`ingest_wiki.py` → `wiki_lancedb`)**: Scrapes the Factorio Wiki via the MediaWiki API (English wikitext) for gameplay mechanics, ratios, and formulas.
 3. **Clusterio Codebase (`ingest_clusterio.py` → `clusterio_lancedb`)**: AST-parses the Node.js/TypeScript Clusterio plugin architecture (tree-sitter).
 4. **Factorio Forums (`ingest_forum.py` → `forum_lancedb`)**: Scrapes a curated list of forum topics (`forum_links.txt`) for community solutions and discussions.
 5. **Generic GitHub Repos (`ingest_github_repo.py` → `repo_lancedb`)**: Clones and AST-parses (tree-sitter TypeScript/JS + Lua) any GitHub repository — base game data, libraries, or any mod — into one shared, multi-repo index.
-6. **FastMCP Server (`server.py`)**: The bridge that connects the underlying LanceDB vector stores to an LLM via the standard Model Context Protocol.
+6. **Factorio Prototypes (`ingest_prototypes.py` → `prototypes_lancedb`)**: Parses Factorio's prototype definitions (recipes, items, entities, technologies, quality, planets) into one structured record each, holding exact numerical values for `search_factorio_prototypes`. The **vanilla baseline** (base + DLC); built locally and not shipped in the release zip.
+7. **FastMCP Server (`server.py`)**: The bridge that connects the underlying LanceDB vector stores to an LLM via the standard Model Context Protocol.
 
 For developer reference — module layout, the store schemas, the MCP tool list, and the validation playbook — see **[docs/](docs/README.md)**.
 

@@ -8,7 +8,7 @@ crashing the server.
 
 ## Search tools
 
-All five accept a **list** of query strings (encoded in one batch) and clamp
+All six accept a **list** of query strings (encoded in one batch) and clamp
 `limit` to **1–20**. Each returns a formatted markdown string. Retrieval goes
 through `common.hybrid_search`: LanceDB hybrid (RRF reranking over the store's FTS
 index + the dense vector), falling back to pure vector where the store has no FTS
@@ -21,6 +21,7 @@ index or on a transient error.
 | `search_factorio_wiki` | `(queries, limit=5)` | wiki | — |
 | `search_factorio_forums` | `(queries, limit=5)` | forum | — |
 | `search_github_code` | `(queries, repo_name=None, limit=5)` | repo | `repo_name` (matched against `repo_url`) |
+| `search_factorio_prototypes` | `(queries, prototype_type=None, limit=5)` | prototypes | `prototype_type` |
 
 Filter values are escaped before use: single quotes are doubled for the SQL
 literal, and `LIKE` filters (`plugin`, `repo_name`) escape `% _ \` via

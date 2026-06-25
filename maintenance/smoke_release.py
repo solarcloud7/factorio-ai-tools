@@ -113,7 +113,7 @@ def run_checks():
         return bool(fac) and fac != "unknown", f"factorio_docs_version={fac!r}"
 
     check("Layer A: data downloaded to the isolated home", layer_a_downloaded)
-    check("all 5 stores present", stores_present)
+    check("all 5 release stores present", stores_present)
     check("tables open", tables_open)
     # anchors are query-independent + success-only (not in the query echo / errors):
     check("docs -> teleport method", lambda: has(srv.search_factorio_docs(["how do I teleport an entity"], limit=5), "method_teleport"))
