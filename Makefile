@@ -1,4 +1,4 @@
-.PHONY: help sync compact status dump-data ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos ingest-prototypes package-dbs deploy-dbs test eval smoke mcp inspect
+.PHONY: help sync compact status dump-data clean ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos ingest-prototypes package-dbs deploy-dbs test eval smoke mcp inspect
 
 # Latest GitHub release tag; override with `make deploy-dbs TAG=vX.Y.Z`.
 TAG ?= $(shell gh release view --json tagName -q .tagName)
@@ -19,7 +19,8 @@ help:
 	@echo "  make status        - Per-store inventory: row count, version, FTS index, health (read-only)"
 	@echo "  make dump-data     - Vanilla factorio --dump-data export (no mods) for prototypes; needs FACTORIO_BIN + VER"
 	@echo "  make package-dbs   - Zip the 6 stores into factorio_lancedb.zip"
-	@echo "  make deploy-dbs    - Compact, package, and upload the final build to the latest release"
+	@echo "  make deploy-dbs    - Compact, package, upload to the latest release, then delete the local zip"
+	@echo "  make clean         - Remove throwaway build artifacts (zip, scratch, caches); keeps data/ + dumps"
 	@echo "  make test          - Run the offline test suite (chunk-health strict)"
 	@echo "  make eval          - Retrieval recall@k: vector vs FTS vs hybrid (after re-ingest)"
 	@echo "  make smoke         - Release smoke test: install published wheel, fresh download, assert tools"
@@ -82,10 +83,18 @@ dump-data:
 package-dbs:
 	$(PY) -c "import os,zipfile; stores='$(STORES)'.split(); z=zipfile.ZipFile('factorio_lancedb.zip','w',zipfile.ZIP_DEFLATED); [z.write(os.path.join(r,f), os.path.relpath(os.path.join(r,f),'data')) for s in stores for r,_,fs in os.walk(os.path.join('data',s)) for f in fs]; z.close(); print('Packaged', len(stores), 'stores into factorio_lancedb.zip')"
 
-# Manual release of the final full build: finalize (compact), package, and
-# upload to the latest GitHub release (data/ is gitignored, so this is local).
+# Manual release of the final full build: finalize (compact), package, upload to the
+# latest GitHub release, then delete the local zip — once it's on the release it's a
+# throwaway artifact (the source of truth is data/ + the release asset), so we don't
+# leave a stale ~100 MB file behind.
 deploy-dbs: compact package-dbs
 	gh release upload $(TAG) factorio_lancedb.zip --clobber
+	$(PY) -c "import os; os.path.exists('factorio_lancedb.zip') and os.remove('factorio_lancedb.zip'); print('Removed local factorio_lancedb.zip')"
+
+# Remove throwaway build artifacts (the release zip, dump-mod scratch, py caches).
+# KEEPS data/ stores and factorio-export/vanilla_* dumps (the ingest inputs).
+clean:
+	$(PY) -c "import shutil,glob,os; [os.remove(p) for p in glob.glob('factorio_lancedb.zip')]; [shutil.rmtree(p,ignore_errors=True) for p in ['factorio-export/.vanilla-mods','.pytest_cache','build','dist']+glob.glob('**/__pycache__',recursive=True)+glob.glob('*.egg-info')]; print('Cleaned build artifacts (kept data/ + factorio-export/vanilla_* dumps).')"
 
 # Sync deps, then auto-select torch by hardware: pyproject keeps the CPU wheel as
 # default (clean for PyPI/Docker/CI); on a box with an NVIDIA GPU this swaps in the
