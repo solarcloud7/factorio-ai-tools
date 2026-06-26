@@ -9,6 +9,11 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY src/ ./src/
 
+# .git isn't in the build context, so setuptools-scm can't derive a version from git history
+# (it fails the editable build of this package). Pin a placeholder — the version is irrelevant
+# at runtime. (Alternative: COPY the .git dir before this step to keep the real version.)
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0
+
 RUN uv sync --no-dev --frozen --no-cache
 
 ENV PYTHONUNBUFFERED=1
