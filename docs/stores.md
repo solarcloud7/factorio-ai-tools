@@ -22,9 +22,9 @@ schema, so changing a schema below forces a full re-ingest of that store.
 
 Factorio Lua API + prototype documentation. Columns: `text`, `vector`,
 `node_type`, `class_name`, `returns`, `version`, `url`, `source_url`,
-`content_hash`. Holds **two versions** (`VERSIONS_TO_SCRAPE = ["1.1.110",
-"latest"]`); `search_factorio_docs` filters by `version` (default `latest`) and
-optional `class_name`. Writes `version.txt`.
+`content_hash`. Holds **two pinned versions** (`common.SUPPORTED_FACTORIO_VERSIONS =
+("1.1.110", "2.0.76")` — no moving `latest`); `search_factorio_docs` **requires** a
+concrete `version` (one of those) plus optional `class_name`. Writes `version.txt`.
 
 ## wiki_lancedb → `docs`
 

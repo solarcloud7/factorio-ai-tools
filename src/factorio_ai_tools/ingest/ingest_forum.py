@@ -114,7 +114,7 @@ def main():
                         "file_path": url,
                         "class_name": title,
                         "content": chunk_content,
-                        "version": "latest",
+                        "version": "",  # forum posts aren't Factorio-versioned (no "latest" label)
                         "content_hash": current_hash,
                         "vector": embedding,
                     })

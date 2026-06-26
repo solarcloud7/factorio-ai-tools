@@ -14,10 +14,10 @@ from lancedb.pydantic import LanceModel, Vector
 
 from factorio_ai_tools.ingest import common
 
-# Both versions are intentional: server.search_factorio_docs defaults its
-# ``version`` filter to "latest", so the docs table must contain "latest" rows or
-# default queries return nothing.
-VERSIONS_TO_SCRAPE = ["1.1.110", "latest"]
+# Concrete pinned versions only — NO moving "latest" label (it drifted, a source of
+# confusion). `search_factorio_docs` requires one of these exact versions. Shared with
+# the server via common so the scraped set and the queryable set can't diverge.
+VERSIONS_TO_SCRAPE = list(common.SUPPORTED_FACTORIO_VERSIONS)
 
 
 class FactorioDoc(LanceModel):

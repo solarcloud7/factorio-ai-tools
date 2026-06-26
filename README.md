@@ -12,7 +12,7 @@ A lightning-fast, hybrid-search Vector Database and Model Context Protocol (MCP)
 ## Architecture
 
 This project consists of six ingestion pipelines (sharing `ingest/common.py` for the embedding, hashing, and tree-sitter contract) feeding six LanceDB vector stores, plus the MCP server:
-1. **Factorio Docs (`ingest_factorio.py` → `factorio_lancedb`)**: Scrapes the official Lua API documentation and Data Phase Prototypes across multiple versions (`1.1.110` and `latest`).
+1. **Factorio Docs (`ingest_factorio.py` → `factorio_lancedb`)**: Scrapes the official Lua API documentation and Data Phase Prototypes for two pinned versions (`1.1.110` and `2.0.76` — no moving `latest`).
 2. **Factorio Wiki (`ingest_wiki.py` → `wiki_lancedb`)**: Scrapes the Factorio Wiki via the MediaWiki API (English wikitext) for gameplay mechanics, ratios, and formulas.
 3. **Clusterio Codebase (`ingest_clusterio.py` → `clusterio_lancedb`)**: AST-parses the Node.js/TypeScript Clusterio plugin architecture (tree-sitter).
 4. **Factorio Forums (`ingest_forum.py` → `forum_lancedb`)**: Scrapes a curated list of forum topics (`forum_links.txt`) for community solutions and discussions.
@@ -114,7 +114,7 @@ git config core.hooksPath maintenance/hooks
 Every tool can be turned on/off individually via `--enable-tools` / `--disable-tools` (see [Selective Tool Loading](#selective-tool-loading-optional)). All search tools accept a **list of queries** in one call and clamp `limit` to 1–20.
 
 **Knowledge search** (one per vector store):
-- `search_factorio_docs`: Look up Lua Runtime API methods, concepts, and events plus Data Phase prototypes. Filter by `class_name` and `version` (`1.1.110` vs `latest`).
+- `search_factorio_docs`: Look up Lua Runtime API methods, concepts, and events plus Data Phase prototypes. Filter by `class_name` and a **required** `version` — one of `1.1.110` or `2.0.76` (there is no `latest`).
 - `search_factorio_wiki`: Game mechanics, ratios, fluid mechanics, and formulas straight from the Factorio Wiki.
 - `search_factorio_forums`: Curated Factorio forum topics — community solutions, edge cases, and discussions.
 - `search_clusterio_code`: Semantically search the Clusterio Node.js/TypeScript architecture. Filter by `node_type`.

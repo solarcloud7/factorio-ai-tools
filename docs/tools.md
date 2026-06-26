@@ -16,7 +16,7 @@ index or on a transient error.
 
 | Tool | Signature | Store | Filters |
 |---|---|---|---|
-| `search_factorio_docs` | `(queries, class_filter=None, limit=5, factorio_version="latest")` | factorio | `class_name`, `version` |
+| `search_factorio_docs` | `(queries, class_filter=None, limit=5, factorio_version)` | factorio | `class_name`, `version` (**required**: `1.1.110` or `2.0.76`; no `latest`) |
 | `search_clusterio_code` | `(queries, node_type=None, plugin=None, limit=5)` | clusterio | `node_type`, `plugin` (matched against `file_path`) |
 | `search_factorio_wiki` | `(queries, limit=5)` | wiki | — |
 | `search_factorio_forums` | `(queries, limit=5)` | forum | — |

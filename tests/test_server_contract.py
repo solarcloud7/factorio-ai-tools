@@ -81,3 +81,12 @@ def test_prototype_umbrella_filter_groups_cover_subtypes():
     assert {"furnace", "inserter", "assembling-machine"} <= groups["entity"], "entity umbrella misses entity subtypes"
     src = open(SERVER, encoding="utf-8").read()
     assert "PROTOTYPE_TYPE_GROUPS" in src, "server.py no longer expands umbrella prototype_type filters (#4 regression)"
+
+
+def test_search_factorio_docs_requires_concrete_version():
+    """The docs tool must REQUIRE a concrete version (no implicit 'latest' default)
+    and validate against the pinned set — the moving 'latest' label was removed."""
+    src = open(SERVER, encoding="utf-8").read()
+    assert "factorio_version: str = None" in src, "factorio_version must have no default (be required)"
+    assert "SUPPORTED_FACTORIO_VERSIONS" in src, "docs tool must validate the version against the pinned set"
+    assert 'factorio_version="latest"' not in src, "the 'latest' default must be gone"

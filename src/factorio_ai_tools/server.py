@@ -182,7 +182,7 @@ Clusterio is a multi-server Factorio management ecosystem split into multiple pa
 
 When building a Clusterio plugin, you must implement logic across these layers, using `messages` (IPC) to pass data between the Factorio Lua runtime, the Node.js Instance, and the Master server.
 
-When writing Lua code, always use the `search_factorio_docs` tool to verify the syntax of the Control API or the properties of the Data Phase Prototypes.
+When writing Lua code, always use the `search_factorio_docs` tool to verify the syntax of the Control API or the properties of the Data Phase Prototypes. It requires an explicit `factorio_version` — pass `2.0.76` for Factorio 2.x, or `1.1.110` for legacy 1.1 (there is no "latest").
 When dealing with Node.js IPC or Plugin architecture, always use `search_clusterio_code`.
 For gameplay mechanics, formulas, ratios, fluid mechanics, or general game knowledge, use the `search_factorio_wiki` tool.
 For exact numerical values — recipe ingredients/amounts, crafting times, assembler speeds, technology research costs, quality tier bonuses, planet surface conditions — use `search_factorio_prototypes`. Combine it with `search_factorio_wiki` when a complete answer needs both precise values AND gameplay context.
@@ -190,22 +190,29 @@ Never assume a method or concept exists without verifying it in the docs.
 You also have the ability to decode and encode Factorio Blueprint strings using `decode_factorio_blueprint` and `encode_factorio_blueprint`. You can use these tools to dynamically inspect, generate, or optimize factory layouts directly for the user!"""
 
 @optional_tool()
-def search_factorio_docs(queries: list[str], class_filter: str = None, limit: int = 5, factorio_version: str = "latest") -> str:
+def search_factorio_docs(queries: list[str], class_filter: str = None, limit: int = 5, factorio_version: str = None) -> str:
     """
     Search Factorio API documentation.
-    
+
     Args:
         queries: A list of search query strings to batch process.
         class_filter: Optional class name to filter by (e.g., 'LuaEntity').
         limit: Maximum number of chunks to return per query (default 5, max 20).
-        factorio_version: The Factorio version to search against. Defaults to 'latest' (which uses the newest version in the db). Pass '1.1.110' for legacy mods.
+        factorio_version: REQUIRED — the exact Factorio version to search. Must be
+            one of the pinned versions (1.1.110 = legacy 1.1, 2.0.76 = the 2.x
+            baseline). There is no "latest" — pass a concrete version.
     """
     if table_factorio is None:
         return "Error: Factorio database table not found. Please run ingest/ingest_factorio.py first."
-        
+
     if not queries:
         return "No queries provided."
-        
+
+    if factorio_version not in common.SUPPORTED_FACTORIO_VERSIONS:
+        valid = ", ".join(common.SUPPORTED_FACTORIO_VERSIONS)
+        return (f"Error: factorio_version is required and must be one of: {valid}. "
+                f"(The moving 'latest' label was removed — pass a concrete version.)")
+
     try:
         limit = min(max(1, limit), 20)
         
@@ -220,9 +227,9 @@ def search_factorio_docs(queries: list[str], class_filter: str = None, limit: in
                 safe_class = class_filter.replace("'", "''")
                 conditions.append(f"class_name = '{safe_class}'")
 
-            ver = factorio_version if factorio_version not in ("latest", "") else "latest"
-            safe_ver = ver.replace("'", "''")
-            conditions.append(f"version = '{safe_ver}'")
+            # factorio_version is validated above against the pinned set, so it's a
+            # known-clean literal (no escaping needed).
+            conditions.append(f"version = '{factorio_version}'")
 
             results = hybrid_search(table_factorio, queries[idx], query_vec, limit,
                                     where=" AND ".join(conditions))

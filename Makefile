@@ -1,4 +1,4 @@
-.PHONY: help sync compact ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos ingest-prototypes package-dbs deploy-dbs test eval smoke mcp inspect
+.PHONY: help sync compact status dump-data ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos ingest-prototypes package-dbs deploy-dbs test eval smoke mcp inspect
 
 # Latest GitHub release tag; override with `make deploy-dbs TAG=vX.Y.Z`.
 TAG ?= $(shell gh release view --json tagName -q .tagName)
@@ -16,6 +16,8 @@ help:
 	@echo "  make sync          - Install deps; auto-select CUDA torch if an NVIDIA GPU is present"
 	@echo "  make ingest-all    - (Re)build all 6 LanceDB stores (incremental/idempotent)"
 	@echo "  make compact       - Compact/finalize every data/*_lancedb store"
+	@echo "  make status        - Per-store inventory: row count, version, FTS index, health (read-only)"
+	@echo "  make dump-data     - Vanilla factorio --dump-data export (no mods) for prototypes; needs FACTORIO_BIN + VER"
 	@echo "  make package-dbs   - Zip the 6 stores into factorio_lancedb.zip"
 	@echo "  make deploy-dbs    - Compact, package, and upload the final build to the latest release"
 	@echo "  make test          - Run the offline test suite (chunk-health strict)"
@@ -62,6 +64,16 @@ ingest-all: ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-rep
 
 compact:
 	$(PY) maintenance/compact_lancedb.py
+
+# Read-only inventory of data/*_lancedb: row count, version, FTS index, health.
+status:
+	$(PY) maintenance/store_status.py
+
+# Produce a vanilla `factorio --dump-data` export (base + Space Age DLC, no community
+# mods) for the prototypes store. Needs a Factorio install + the version label:
+#   make dump-data FACTORIO_BIN="D:\factorio\bin\x64\factorio.exe" VER=2.0.76
+dump-data:
+	$(PY) maintenance/dump_data.py --factorio "$(FACTORIO_BIN)" --version "$(VER)"
 
 # Bundle exactly the 6 stores into factorio_lancedb.zip (arcnames relative to
 # data/, so each <store>/ sits at the zip root). The asset name is load-bearing:
