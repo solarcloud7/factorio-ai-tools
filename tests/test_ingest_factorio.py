@@ -17,7 +17,7 @@ def _load(name):
 
 
 def test_parse_runtime_api_shapes():
-    chunks = ingest_factorio.parse_runtime_api(_load("runtime_api.json"), "latest", "src", "h")
+    chunks = ingest_factorio.parse_runtime_api(_load("runtime_api.json"), "2.0.76", "src", "h")
     types = {c["node_type"] for c in chunks}
     assert {"class", "method", "attribute", "event", "concept"} <= types
     required = {"text", "node_type", "class_name", "version", "url", "source_url", "content_hash"}
@@ -25,7 +25,7 @@ def test_parse_runtime_api_shapes():
 
 
 def test_parse_prototype_api_shapes():
-    chunks = ingest_factorio.parse_prototype_api(_load("prototype_api.json"), "latest", "src", "h")
+    chunks = ingest_factorio.parse_prototype_api(_load("prototype_api.json"), "2.0.76", "src", "h")
     types = {c["node_type"] for c in chunks}
     assert {"prototype", "prototype_property", "prototype_type"} <= types
 
@@ -51,6 +51,7 @@ def test_factorio_e2e_populates_both_versions(tmp_data_dir, fake_embedder, monke
 
     t = lancedb.connect(str(tmp_data_dir / "factorio_lancedb")).open_table("docs")
     versions = {r["version"] for r in t.search().limit(10000).to_list()}
-    # Both must exist: server.search_factorio_docs defaults its filter to 'latest'.
-    assert "latest" in versions and "1.1.110" in versions
+    # Both pinned concrete versions must exist; the moving "latest" label is gone
+    # (search_factorio_docs requires a concrete version).
+    assert {"1.1.110", "2.0.76"} <= versions and "latest" not in versions
     assert (tmp_data_dir / "factorio_lancedb" / "version.txt").exists()

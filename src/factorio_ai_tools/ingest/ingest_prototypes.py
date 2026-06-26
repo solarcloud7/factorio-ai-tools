@@ -6,7 +6,7 @@ structured text record per prototype holding exact numerical values. This is the
 **vanilla baseline** (base + Space Age DLC); a modded game's dump differs.
 
 Input path: ``FACTORIO_DATA_DUMP`` env, default
-``<repo_root>/factorio-export/vanilla_2.1.8/data-raw-dump.json``. Produce the dump
+``<repo_root>/factorio-export/vanilla_2.0.76/data-raw-dump.json``. Produce the dump
 with ``factorio --dump-data`` (see ``factorio-export/README.md``). Incremental by
 (prototype_type, prototype_name) SHA-256 via ``merge_insert`` upsert; writes
 ``version.txt``.
@@ -396,7 +396,7 @@ def _write_version(db_path, version):
 def main():
     dump_path = os.environ.get(
         "FACTORIO_DATA_DUMP",
-        os.path.join(common.REPO_ROOT, "factorio-export", "vanilla_2.1.8", "data-raw-dump.json"),
+        os.path.join(common.REPO_ROOT, "factorio-export", "vanilla_2.0.76", "data-raw-dump.json"),
     )
     if not os.path.exists(dump_path):
         common.safe_print(f"ERROR: data-raw-dump.json not found at {dump_path}.")

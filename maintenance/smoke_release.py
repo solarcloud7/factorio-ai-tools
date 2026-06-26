@@ -113,7 +113,7 @@ def run_checks():
     check("all 6 release stores present", stores_present)
     check("tables open", tables_open)
     # anchors are query-independent + success-only (not in the query echo / errors):
-    check("docs -> teleport method", lambda: has(srv.search_factorio_docs(["how do I teleport an entity"], limit=5), "method_teleport"))
+    check("docs -> teleport method", lambda: has(srv.search_factorio_docs(["how do I teleport an entity"], limit=5, factorio_version="2.0.76"), "method_teleport"))
     check("clusterio plugin=player_auth (escaped LIKE)", lambda: has(srv.search_clusterio_code(["authentication tokens"], plugin="player_auth", limit=3), "player_auth"))
     check("repo 'iron plate recipe' -> recipe.lua", lambda: has(srv.search_github_code(["iron plate recipe"], repo_name="factorio-data", limit=3), "recipe.lua"))
     check("wiki 'transport belt' -> wiki result", lambda: has(srv.search_factorio_wiki(["transport belt speed"], limit=3), "wiki.factorio.com"))

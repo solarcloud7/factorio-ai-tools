@@ -16,7 +16,7 @@ uv sync
 
 # Build/refresh the vector stores (each is incremental/idempotent — safe to re-run).
 # Every store is written under data/. Run one at a time, or all via the Makefile.
-uv run python -m factorio_ai_tools.ingest.ingest_factorio      # -> data/factorio_lancedb  (Lua API + prototype docs, versions 1.1.110 + latest)
+uv run python -m factorio_ai_tools.ingest.ingest_factorio      # -> data/factorio_lancedb  (Lua API + prototype docs, pinned versions 1.1.110 + 2.0.76)
 uv run python -m factorio_ai_tools.ingest.ingest_wiki          # -> data/wiki_lancedb      (full Factorio wiki via MediaWiki API)
 uv run python -m factorio_ai_tools.ingest.ingest_forum         # -> data/forum_lancedb     (curated topics from forum_links.txt)
 uv run python -m factorio_ai_tools.ingest.ingest_clusterio     # -> data/clusterio_lancedb (set CLUSTERIO_REPO; defaults to ./clusterio)
@@ -47,7 +47,7 @@ make test                          # or: uv run python -m pytest -q
 make eval                          # or: uv run python maintenance/eval_retrieval.py
 ```
 
-There is an offline pytest suite (`tests/`, run via `make test`) and a local-only retrieval eval (`make eval`, golden set at `tests/golden/queries.yaml`); there is no linter or build step beyond the above. `smithery.yaml` defines the Smithery deployment (build = install deps + run the ingest scripts; run = the server). Validation gates, the dry-run protocol, and known limitations live in `docs/rag-pipeline-playbook.md`.
+There is an offline pytest suite (`tests/`, run via `make test`) and a local-only retrieval eval (`make eval`, golden set at `tests/golden/queries.yaml`); there is no linter or build step beyond the above. Deployment is the published PyPI wheel (`uvx`/`pip`, auto-published by `.github/workflows/pypi-publish.yml` on GitHub release-publish via trusted publishing) or the `Dockerfile` (runs the SSE server on port 8000); either way the stores are fetched at runtime by `ensure_databases()` from the release zip. Validation gates, the dry-run protocol, and known limitations live in `docs/rag-pipeline-playbook.md`.
 
 To test a tool manually, import `factorio_ai_tools.server` in a REPL — the `@mcp.tool()` functions are plain callables. Note that importing it eagerly loads the SentenceTransformer model and opens all six LanceDB connections (factorio / clusterio / wiki / forum / repo / prototypes).
 
@@ -68,7 +68,7 @@ To test a tool manually, import `factorio_ai_tools.server` in a REPL — the `@m
 **Code-aware chunking via Tree-sitter.** `common.extract_ast_chunks(src_bytes, kind, include_comments=)` parses files into AST nodes (classes, functions, methods, interfaces / tables) using the modern `Parser(lang)` / `Query` / `QueryCursor` API (tree-sitter ≥ 0.22; **never** `parser.set_language`). `ingest_clusterio.py` uses it for TypeScript/JS (with preceding comments); `ingest_github_repo.py` uses it for TypeScript/JS and Lua. Non-code files fall back to sliding-window text chunking (`common.text_chunks_by_char`, 1500/200, for prose; `common.text_chunks_by_line`, 50/10, for the generic repo ingester). The doc/wiki/forum scripts use text chunking only.
 
 **Per-store table names and key columns** (the server opens these by exact name; all stores live under `data/`):
-- `data/factorio_lancedb` → table `docs`: `text`, `class_name`, `version`, `url`, `node_type`, `returns`, `source_url`, `content_hash`. Holds **both versions** `["1.1.110", "latest"]`; `search_factorio_docs` filters by `version` (default `latest`, so `latest` rows must exist) and optional `class_name`. FTS index on `text`. Writes `version.txt`.
+- `data/factorio_lancedb` → table `docs`: `text`, `class_name`, `version`, `url`, `node_type`, `returns`, `source_url`, `content_hash`. Holds **two pinned versions** `common.SUPPORTED_FACTORIO_VERSIONS = ("1.1.110", "2.0.76")` (no moving `latest` — it drifted and was removed); `search_factorio_docs` **requires** a concrete `version` (one of those) plus optional `class_name`. FTS index on `text`. Writes `version.txt`.
 - `data/clusterio_lancedb` → table `codebase`: `content`, `file_path`, `node_type`, `node_name`, `content_hash`. Writes `version.txt` from the repo's `package.json`.
 - `data/wiki_lancedb` → table `docs`: `text`, `title`, `url`, `content_hash`. FTS index on `text`.
 - `data/forum_lancedb` → table `forum`: `content`, `class_name` (= topic title), `file_path` (= URL), `version`, `id`, `content_hash`.
@@ -79,7 +79,7 @@ To test a tool manually, import `factorio_ai_tools.server` in a REPL — the `@m
 
 **Server resilience.** `server.py` opens each table in its own try/except and sets the handle to `None` on failure, so a missing store degrades only the affected tool (which returns a "run ingest_X first" error) rather than crashing the server. Search tools accept a **list of queries** (batched encode) and clamp `limit` to 1–20. **Retrieval is hybrid:** `hybrid_search()` runs LanceDB hybrid (RRF reranker over the ingest-built FTS index + vector) and transparently **falls back to pure vector** where no FTS index exists (forum) or on any hybrid error (cached per table). SQL `LIKE` filters are escaped via `common.like_filter` (`%`/`_`/`\` + `ESCAPE`). Hybrid was shipped after `make eval` confirmed it never regresses vs vector (see `docs/rag-pipeline-playbook.md` §0/§2.3).
 
-**Non-search tools** in `server.py` are self-contained (no DB): `decode_factorio_blueprint`/`encode_factorio_blueprint` (base64+zlib, version byte `0`, 10 MB decompress guard), `factorio_mod_portal_analyzer` (mods.factorio.com API), `get_mcp_version_info` (reads the `factorio_lancedb` + `clusterio_lancedb` `version.txt` files). There is also an `@mcp.prompt()`, `factorio_clusterio_expert`, that supplies the modding/Clusterio mental model. (A `factorio_log_inspector` tool existed historically but was deliberately removed in `82a5409`.)
+**Non-search tools** in `server.py` are self-contained (no DB): `decode_factorio_blueprint`/`encode_factorio_blueprint` (base64+zlib, version byte `0`, 10 MB decompress guard), `factorio_mod_portal_analyzer` (mods.factorio.com API), `get_mcp_version_info` (reads the `factorio_lancedb` + `clusterio_lancedb` + `prototypes_lancedb` `version.txt` files). There is also an `@mcp.prompt()`, `factorio_clusterio_expert`, that supplies the modding/Clusterio mental model. (A `factorio_log_inspector` tool existed historically but was deliberately removed in `82a5409`.)
 
 ## Conventions (from `.agents/AGENTS.md`)
 

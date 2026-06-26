@@ -258,8 +258,8 @@ def test_hybrid_where_threaded_to_vector_fallback():
     class_filter/version/plugin/repo_url scope on the vector path."""
     common._NO_HYBRID.clear()
     t = _FakeTable(rows=[{"file_path": "a"}], hybrid_error=RuntimeError("transient"))
-    common.hybrid_search(t, "q", [0.0] * 4, 5, where="version = 'latest'")
-    assert t.last_where == "version = 'latest'"
+    common.hybrid_search(t, "q", [0.0] * 4, 5, where="version = '2.0.76'")
+    assert t.last_where == "version = '2.0.76'"
 
 
 def test_hybrid_real_table_happy_path(tmp_path):

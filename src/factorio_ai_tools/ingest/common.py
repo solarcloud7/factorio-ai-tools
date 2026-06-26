@@ -612,6 +612,14 @@ PROTOTYPE_TYPE_GROUPS = {
     "entity": PROTOTYPE_ENTITY_TYPES,
 }
 
+# --- Factorio version pinning (shared by ingest_factorio.py + server's docs filter) ---
+# Concrete, hard-coded versions only. The moving "latest" label is deliberately NOT
+# used — it drifted (latest silently became 2.1.x while callers expected an earlier
+# release), so callers must query by a concrete version. 1.1.110 is legacy 1.1;
+# 2.0.76 is the pinned 2.x baseline. The docs site serves per-version URLs
+# (lua-api.factorio.com/<ver>/), so each is scraped concretely.
+SUPPORTED_FACTORIO_VERSIONS = ("1.1.110", "2.0.76")
+
 _LANG_CACHE = {}
 
 
