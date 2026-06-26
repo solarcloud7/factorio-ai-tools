@@ -10,17 +10,9 @@ from factorio_ai_tools.ingest import (
     ingest_factorio,
     ingest_forum,
     ingest_github_repo,
+    ingest_prototypes,
     ingest_wiki,
 )
-
-# The prototypes drift guard needs luaparser. Guard ONLY this import: a module-level
-# importorskip would skip the whole module, silently dropping the drift guards for
-# the five core stores too. With this, the five core guards always run; the
-# prototypes entry is added to CONTRACT only when luaparser is available.
-try:
-    from factorio_ai_tools.ingest import ingest_prototypes
-except Exception:  # luaparser not installed — run `uv sync` first
-    ingest_prototypes = None
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 SERVER = os.path.join(ROOT, "src", "factorio_ai_tools", "server.py")
@@ -40,10 +32,9 @@ CONTRACT = {
     "clusterio": (ingest_clusterio.CodeChunk, {"content", "file_path", "node_type", "node_name"}),
     "forum": (ingest_forum.SCHEMA, {"content", "class_name", "file_path"}),
     "repo": (ingest_github_repo.SCHEMA, {"content", "repo_url", "file_path", "node_type", "node_name"}),
+    "prototypes": (ingest_prototypes.PrototypeRecord,
+                   {"prototype_type", "prototype_name", "category", "content", "version", "content_hash"}),
 }
-if ingest_prototypes is not None:
-    CONTRACT["prototypes"] = (ingest_prototypes.PrototypeRecord,
-                              {"prototype_type", "prototype_name", "category", "content", "version", "content_hash"})
 
 
 def test_schemas_cover_server_reads():
@@ -79,3 +70,14 @@ def test_all_schemas_carry_content_hash_and_vector():
         cols = common._schema_columns(schema)
         assert "vector" in cols, f"{store}: schema missing vector column"
         assert "content_hash" in cols, f"{store}: schema missing content_hash (incremental dedup)"
+
+
+def test_prototype_umbrella_filter_groups_cover_subtypes():
+    """search_factorio_prototypes advertises "item"/"entity" as filter values, but
+    the store keeps each raw subtype — the umbrella expansion must cover them, and
+    the server must actually use the shared groups (not an exact-match WHERE)."""
+    groups = common.PROTOTYPE_TYPE_GROUPS
+    assert {"module", "ammo", "gun"} <= groups["item"], "item umbrella misses item subtypes"
+    assert {"furnace", "inserter", "assembling-machine"} <= groups["entity"], "entity umbrella misses entity subtypes"
+    src = open(SERVER, encoding="utf-8").read()
+    assert "PROTOTYPE_TYPE_GROUPS" in src, "server.py no longer expands umbrella prototype_type filters (#4 regression)"

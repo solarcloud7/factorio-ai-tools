@@ -20,6 +20,9 @@ data/
 # factorio-data checkout cloned by `make ingest-prototypes` (FACTORIO_DATA_REPO)
 /factorio-data/
 
+# `factorio --dump-data` exports (large per-version JSON; Phase 2 ingest input)
+/factorio-export/
+
 # Build/deploy artifact produced by `make package-dbs` / `make deploy-dbs`
 factorio_lancedb.zip
 

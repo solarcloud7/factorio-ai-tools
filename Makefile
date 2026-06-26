@@ -48,11 +48,17 @@ ingest-repos:
 	$(PY) -m factorio_ai_tools.ingest.ingest_github_repo --repo-url https://github.com/Teoxoy/factorio-blueprint-editor.git
 	$(PY) -m factorio_ai_tools.ingest.ingest_github_repo --repo-url https://github.com/notnotmelon/maraxsis.git
 
+# Reads a Factorio `--dump-data` export (no clone needed). Produce the dump from a
+# vanilla install (see factorio-export/*/SOURCE.txt) and point FACTORIO_DATA_DUMP at
+# it, or place it at the default factorio-export/vanilla_<ver>/ path. Errors loudly
+# if the dump is missing — this store can't be built without it.
 ingest-prototypes:
-	$(PY) -c "import os,subprocess as s; s.run(['git','clone','--depth','1','https://github.com/wube/factorio-data.git','factorio-data'],check=True) if not os.path.exists('factorio-data') else print('factorio-data checkout present')"
 	$(PY) -m factorio_ai_tools.ingest.ingest_prototypes
 
-ingest-all: ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos ingest-prototypes
+# prototypes needs a manually-produced dump, so it runs LAST and non-fatally (the
+# leading '-'): a missing dump must never break refreshing the other five stores.
+ingest-all: ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos
+	-$(PY) -m factorio_ai_tools.ingest.ingest_prototypes
 
 compact:
 	$(PY) maintenance/compact_lancedb.py

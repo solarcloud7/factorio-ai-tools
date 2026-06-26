@@ -581,6 +581,42 @@ NODE_TYPES = frozenset({
     "text_file",    # non-code files (prose/config)
 })
 
+# --- Prototype type vocab (shared by ingest_prototypes.py and server.py) -------
+# prototypes_lancedb stores each prototype's RAW Lua type (e.g. "ammo", "module",
+# "furnace"). These sets keep the ingester's routing and the server's filter in
+# sync. PROTOTYPE_TYPE_GROUPS lets search_factorio_prototypes accept the umbrella
+# values "item"/"entity" and expand them to every raw subtype actually stored.
+PROTOTYPE_ENTITY_TYPES = frozenset({
+    "assembling-machine", "furnace", "rocket-silo", "mining-drill", "lab",
+    "boiler", "generator", "reactor", "beacon", "inserter", "transport-belt",
+    "splitter", "underground-belt", "storage-tank", "pipe", "pipe-to-ground",
+    "train-stop", "locomotive", "cargo-wagon", "fluid-wagon", "electric-pole",
+    "offshore-pump", "accumulator", "solar-panel", "electric-turret",
+    "fluid-turret", "ammo-turret", "pump", "cargo-landing-pad",
+    "space-platform-hub", "asteroid-collector", "agricultural-tower",
+    "thruster", "lightning-attractor", "fusion-reactor", "fusion-generator",
+    "cargo-bay",
+})
+
+PROTOTYPE_SPACE_AGE_TYPES = frozenset({
+    "quality", "planet", "space-location", "asteroid-chunk",
+    "surface-property", "plant",
+})
+
+PROTOTYPE_ITEM_TYPES = frozenset({
+    "item", "ammo", "capsule", "gun", "rail-planner", "repair-tool",
+    "selection-tool", "item-with-entity-data", "module", "tool", "armor",
+    "mining-tool", "spidertron-remote", "space-platform-starter-pack",
+})
+
+# Umbrella filter values -> the raw subtypes they cover. An exact subtype (e.g.
+# "module", "furnace") still matches itself; recipe/fluid/technology/quality/etc.
+# are stored under their own type and match directly.
+PROTOTYPE_TYPE_GROUPS = {
+    "item": PROTOTYPE_ITEM_TYPES,
+    "entity": PROTOTYPE_ENTITY_TYPES,
+}
+
 _LANG_CACHE = {}
 
 

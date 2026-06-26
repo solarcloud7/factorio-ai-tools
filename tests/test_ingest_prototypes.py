@@ -1,273 +1,145 @@
-"""Unit tests for ingest_prototypes parsing and formatting logic.
+"""Unit tests for ingest_prototypes formatting logic.
 
-No DB, no embedder — pure parsing, no network access.
+The ingester reads Factorio's `--dump-data` JSON (resolved `data.raw`), so these
+fixtures are plain dicts shaped like the dump — no Lua parsing, no DB, no embedder.
 """
 
-import pytest
 from factorio_ai_tools.ingest.ingest_prototypes import (
-    _lua_table_to_python,
-    extract_data_extend_calls,
+    _category_for,
+    _recipe_categories,
     format_prototype,
 )
-from luaparser import ast as lua_ast
-from luaparser import astnodes
 
 
-def _first_table_value(src):
-    """Parse `x = {...}` and return the Table node's Python conversion."""
-    tree = lua_ast.parse(src)
-    for node in lua_ast.walk(tree):
-        if isinstance(node, astnodes.Table):
-            return _lua_table_to_python(node)
-    raise AssertionError("no Table node found")
+# --- recipe: 2.1 `categories` array + back-compat singular `category` ----------
 
-RECIPE_LUA = """
-data:extend({
-  {
-    type = "recipe",
-    name = "electronic-circuit",
-    category = "crafting",
-    energy_required = 0.5,
-    enabled = false,
-    ingredients = {
-      {type="item", name="iron-plate", amount=1},
-      {type="item", name="copper-cable", amount=3},
-    },
-    results = {{type="item", name="electronic-circuit", amount=1}},
-  }
-})
-"""
-
-TECH_LUA = """
-data:extend({
-  {
-    type = "technology",
-    name = "automation",
-    prerequisites = {"electronics"},
-    unit = {count=100, ingredients={{"automation-science-pack",1}}, time=10},
-    effects = {{type="unlock-recipe", recipe="assembling-machine-1"}},
-  }
-})
-"""
-
-PARAMETRIC_LUA = """
-data:extend({
-  { type = "item", name = "base-item-" .. n, stack_size = 1 }
-})
-"""
-
-QUALITY_LUA = """
-data:extend({
-  {
-    type = "quality",
-    name = "legendary",
-    level = 4,
-    beacon_power_usage_multiplier = 0.5,
-    science_pack_drain_multiplier = 1,
-  }
-})
-"""
-
-PLANET_LUA = """
-data:extend({
-  {
-    type = "planet",
-    name = "vulcanus",
-    distance = 2.0,
-    surface_properties = {
-      pressure = 1000,
-      temperature = 300,
-    },
-  }
-})
-"""
-
-PAREN_LESS_LUA = """
-data:extend{
-  {
-    type = "fluid",
-    name = "water",
-    default_temperature = 15,
-    max_temperature = 100,
-  }
-}
-"""
-
-ASSEMBLER_LUA = """
-data:extend({
-  {
-    type = "assembling-machine",
-    name = "assembling-machine-1",
-    crafting_speed = 0.5,
-    crafting_categories = {"crafting", "basic-crafting"},
-    energy_usage = "75kW",
-    energy_source = {type = "electric"},
-    max_health = 300,
-    module_specification = {module_slots = 0},
-  }
-})
-"""
+def test_recipe_renders_multiple_categories():
+    # 2.1's resolved dump normalizes to a `categories` list (electronic-circuit is
+    # both 'crafting' and 'electromagnetics'); all of them should render.
+    d = {"type": "recipe", "name": "electronic-circuit",
+         "categories": ["crafting", "electromagnetics"], "energy_required": 0.5,
+         "ingredients": [{"type": "item", "name": "iron-plate", "amount": 1},
+                         {"type": "item", "name": "copper-cable", "amount": 3}],
+         "results": [{"type": "item", "name": "electronic-circuit", "amount": 1}]}
+    content = format_prototype(d)
+    assert "Category: crafting, electromagnetics" in content
+    assert "iron-plate ×1" in content and "copper-cable ×3" in content
+    assert "Crafting time: 0.5s" in content
+    # category column takes the primary (first) category
+    assert _category_for(d) == "crafting"
 
 
-def test_recipe_parsed_correctly():
-    entries = extract_data_extend_calls(RECIPE_LUA)
-    assert len(entries) == 1
-    e = entries[0]
-    assert e["type"] == "recipe"
-    assert e["name"] == "electronic-circuit"
-    assert isinstance(e["ingredients"], list)
+def test_recycling_recipe_category_not_defaulted():
+    # Regression: a recycling recipe carries categories=['recycling']; it must NOT
+    # fall back to the "crafting" default (the bug the dump exposed).
+    d = {"type": "recipe", "name": "gun-turret-recycling", "categories": ["recycling"],
+         "ingredients": [{"name": "gun-turret", "amount": 1}],
+         "results": [{"name": "iron-gear-wheel", "amount": 2}]}
+    assert "Category: recycling" in format_prototype(d)
+    assert _category_for(d) == "recycling"
 
 
-def test_recipe_content_has_ingredients_and_time():
-    content = format_prototype({
-        "type": "recipe",
-        "name": "electronic-circuit",
-        "category": "crafting",
-        "energy_required": 0.5,
-        "enabled": False,
-        "ingredients": [
-            {"name": "iron-plate", "amount": 1},
-            {"name": "copper-cable", "amount": 3},
-        ],
-        "results": [{"name": "electronic-circuit", "amount": 1}],
-    })
-    assert content is not None
-    assert "iron-plate" in content
-    assert "copper-cable" in content
-    assert "0.5" in content
+def test_recipe_singular_category_back_compat():
+    d = {"type": "recipe", "name": "r", "category": "smelting",
+         "ingredients": [{"name": "iron-ore", "amount": 1}]}
+    assert "Category: smelting" in format_prototype(d)
+    assert _recipe_categories(d) == ["smelting"]
 
 
-def test_parametric_prototype_filtered():
-    entries = extract_data_extend_calls(PARAMETRIC_LUA)
-    # name is a Concat node → _lua_table_to_python returns None → entry skipped
-    # or entry has name=None; format_prototype returns None either way
-    usable = [e for e in entries if isinstance(e.get("name"), str)]
-    assert len(usable) == 0
+def test_recipe_default_category_when_absent():
+    d = {"type": "recipe", "name": "r", "ingredients": [{"name": "wood", "amount": 1}]}
+    assert "Category: crafting" in format_prototype(d)
+    assert _category_for(d) == "crafting"
 
 
-def test_technology_parsed_and_formatted():
-    entries = extract_data_extend_calls(TECH_LUA)
-    assert entries
-    assert entries[0]["type"] == "technology"
-    content = format_prototype(entries[0])
-    assert content is not None
-    assert "automation-science-pack" in content or "assembling-machine-1" in content
+def test_recipe_ranged_and_positional_amounts():
+    d = {"type": "recipe", "name": "r",
+         "ingredients": [{"name": "a", "amount_min": 2, "amount_max": 5}, ["b", 4]]}
+    out = format_prototype(d)
+    assert "a ×2-5" in out and "b ×4" in out
 
 
-def test_only_top_level_entries_extracted():
-    # The ingredient dicts inside a recipe must NOT appear as top-level prototypes
-    entries = extract_data_extend_calls(RECIPE_LUA)
-    assert len(entries) == 1, f"Expected 1 entry, got {len(entries)}"
+# --- module effects: dump scalar shape, percent, int, bool guard ---------------
+
+def test_efficiency_module_negative_bonus():
+    d = {"type": "module", "name": "efficiency-module", "effect": {"consumption": -0.3}}
+    assert "consumption: -30%" in format_prototype(d)
 
 
-def test_quality_prototype_parsed_and_formatted():
-    entries = extract_data_extend_calls(QUALITY_LUA)
-    assert entries
-    assert entries[0]["type"] == "quality"
-    content = format_prototype(entries[0])
-    assert content is not None
-    assert "legendary" in content
-    assert "level" in content.lower() or "Level" in content
+def test_speed_module_multiple_effects():
+    d = {"type": "module", "name": "speed-module",
+         "effect": {"speed": 0.2, "consumption": 0.5, "quality": -0.01}}
+    out = format_prototype(d)
+    assert "speed: +20%" in out and "consumption: +50%" in out
 
 
-def test_planet_prototype_parsed_and_formatted():
-    entries = extract_data_extend_calls(PLANET_LUA)
-    assert entries
-    assert entries[0]["type"] == "planet"
-    content = format_prototype(entries[0])
-    assert content is not None
-    assert "vulcanus" in content
+def test_integer_module_bonus_is_percent():
+    d = {"type": "module", "name": "m", "effect": {"speed": 1}}
+    assert "speed: +100%" in format_prototype(d)
 
 
-def test_paren_less_extend_parsed():
-    entries = extract_data_extend_calls(PAREN_LESS_LUA)
-    assert entries
-    assert entries[0]["type"] == "fluid"
-    assert entries[0]["name"] == "water"
+def test_bool_module_effect_not_rendered_as_percent():
+    # bool is a subclass of int; a flag-style effect must not become "+100%".
+    d = {"type": "module", "name": "m", "effect": {"some_flag": True}}
+    out = format_prototype(d)
+    assert "+100%" not in out and "Module effects" not in out
 
 
-def test_assembler_entity_formatted():
-    entries = extract_data_extend_calls(ASSEMBLER_LUA)
-    assert entries
-    content = format_prototype(entries[0])
-    assert content is not None
-    assert "assembling-machine-1" in content
-    assert "0.5" in content  # crafting speed
+# --- other types ---------------------------------------------------------------
 
-
-def test_unsupported_type_returns_none():
-    content = format_prototype({"type": "achievement", "name": "some-achievement"})
-    assert content is None
-
-
-def test_format_prototype_filters_non_string_name():
-    content = format_prototype({"type": "recipe", "name": None})
-    assert content is None
-
-
-def test_fluid_formatted():
-    content = format_prototype({
-        "type": "fluid",
-        "name": "petroleum-gas",
-        "default_temperature": 25,
-        "max_temperature": 100,
-        "fuel_value": "3MJ",
-    })
-    assert content is not None
-    assert "petroleum-gas" in content
-    assert "25" in content
-
-
-def test_negative_numbers_parsed_not_dropped():
-    # Negative literals parse as UMinusOp(Number), not a negative Number. Before
-    # the fix these dropped to None (efficiency-module bonuses, sub-zero temps).
-    d = _first_table_value("x = {bonus = -0.3, temperature = -273, distance = -1.5}")
-    assert d["bonus"] == -0.3
-    assert d["temperature"] == -273
-    assert d["distance"] == -1.5
-
-
-def test_efficiency_module_negative_bonus_in_content():
-    content = format_prototype({
-        "type": "module",
-        "name": "efficiency-module",
-        "effect": {"consumption": {"bonus": -0.3}},
-    })
-    assert content is not None
-    assert "Module effects" in content
-    assert "-30%" in content  # -0.3 rendered as a percentage, not omitted
-
-
-def test_mixed_positional_and_named_table_keeps_both():
-    # A Lua table mixing positional and named entries must not drop the positional
-    # values; they're preserved under Lua's 1-based integer keys.
-    d = _first_table_value("x = {'foo', 'bar', type = 'item'}")
-    assert d["type"] == "item"
-    assert d[1] == "foo"
-    assert d[2] == "bar"
+def test_item_subgroup_is_category_column():
+    d = {"type": "item", "name": "iron-plate", "subgroup": "raw-material", "stack_size": 100}
+    assert "Subgroup: raw-material" in format_prototype(d)
+    assert _category_for(d) == "raw-material"
 
 
 def test_technology_count_formula_rendered():
-    # Factorio 2.0 techs use count_formula instead of a flat count; before the fix
-    # the cost rendered as the garbled "Nonex [...]".
-    content = format_prototype({
-        "type": "technology",
-        "name": "mining-productivity-3",
-        "unit": {"count_formula": "2^(L-6)*1000",
-                 "ingredients": [{"name": "automation-science-pack", "amount": 1}],
-                 "time": 60},
-    })
-    assert content is not None
-    assert "None" not in content
-    assert "2^(L-6)*1000" in content
+    d = {"type": "technology", "name": "t",
+         "unit": {"count_formula": "2^(L-7)*1000", "time": 60,
+                  "ingredients": [["automation-science-pack", 1]]}}
+    content = format_prototype(d)
+    assert "2^(L-7)*1000" in content and "None" not in content
+    assert "automation-science-pack" in content
 
 
-def test_integer_module_bonus_rendered_as_percent():
-    # A whole-number bonus (1) is still +100%, not a raw "1".
-    content = format_prototype({
-        "type": "module",
-        "name": "speed-module",
-        "effect": {"speed": {"bonus": 1}},
-    })
-    assert content is not None
-    assert "+100%" in content
+def test_technology_flat_count_rendered():
+    d = {"type": "technology", "name": "automation",
+         "unit": {"count": 10, "time": 10, "ingredients": [["automation-science-pack", 1]]}}
+    assert "10x [automation-science-pack ×1] 10s each" in format_prototype(d)
+
+
+def test_assembler_entity_formatted():
+    d = {"type": "assembling-machine", "name": "assembling-machine-2",
+         "crafting_speed": 0.75, "crafting_categories": ["crafting", "advanced-crafting"],
+         "energy_usage": "150kW", "energy_source": {"type": "electric"}, "max_health": 350}
+    out = format_prototype(d)
+    assert "Assembling Machine: assembling-machine-2" in out
+    assert "Crafting speed: 0.75" in out and "150kW" in out
+
+
+def test_fluid_formatted():
+    d = {"type": "fluid", "name": "water", "default_temperature": 15, "max_temperature": 100}
+    out = format_prototype(d)
+    assert "water" in out and "15C" in out
+
+
+def test_quality_formatted():
+    d = {"type": "quality", "name": "legendary", "level": 5,
+         "science_pack_drain_multiplier": 0.95}
+    assert "legendary" in format_prototype(d)
+
+
+def test_planet_surface_properties():
+    d = {"type": "planet", "name": "vulcanus", "distance": 10,
+         "surface_properties": {"pressure": 4000, "gravity": 40}}
+    out = format_prototype(d)
+    assert "vulcanus" in out and "pressure=4000" in out
+
+
+def test_unsupported_type_returns_none():
+    assert format_prototype({"type": "sound", "name": "x"}) is None
+    assert format_prototype({"type": "recipe", "name": None}) is None
+
+
+def test_category_for_non_recipe_non_item_is_empty():
+    assert _category_for({"type": "technology", "name": "t"}) == ""

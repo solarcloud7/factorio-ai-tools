@@ -25,6 +25,7 @@ STORE_MAP = {
     "wiki": ("wiki_lancedb", "docs", "text"),
     "forum": ("forum_lancedb", "forum", "content"),
     "repo": ("repo_lancedb", "codebase", "content"),
+    "prototypes": ("prototypes_lancedb", "prototypes", "content"),
 }
 
 # Report fine-grained ks too: on a small corpus recall@10 saturates at 1.00 for
