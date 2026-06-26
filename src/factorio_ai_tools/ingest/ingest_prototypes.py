@@ -7,7 +7,7 @@ structured text record per prototype holding exact numerical values. This is the
 
 Input path: ``FACTORIO_DATA_DUMP`` env, default
 ``<repo_root>/factorio-export/vanilla_2.1.8/data-raw-dump.json``. Produce the dump
-with ``factorio --dump-data`` (see ``factorio-export/*/SOURCE.txt``). Incremental by
+with ``factorio --dump-data`` (see ``factorio-export/README.md``). Incremental by
 (prototype_type, prototype_name) SHA-256 via ``merge_insert`` upsert; writes
 ``version.txt``.
 """
@@ -21,9 +21,9 @@ from lancedb.pydantic import LanceModel, Vector
 from factorio_ai_tools.ingest import common
 
 # Routing vocab lives in common.py (shared with server.py's filter). Alias the
-# names the formatters/dispatch use.
+# names the formatters/dispatch use. Space-age types (quality/planet/…) dispatch
+# via literals in format_prototype, not a set, so there's no SPACE_AGE_TYPES.
 WANTED_ENTITY_TYPES = common.PROTOTYPE_ENTITY_TYPES
-SPACE_AGE_TYPES = common.PROTOTYPE_SPACE_AGE_TYPES
 ITEM_TYPES = common.PROTOTYPE_ITEM_TYPES
 
 
@@ -88,12 +88,18 @@ def _format_recipe(d):
         parts.append("Enabled: false (unlocked by technology)")
     if d.get("allow_productivity"):
         parts.append("Allow productivity modules: yes")
-    ings = d.get("ingredients")
+    # Resolved 2.1 dumps are flat; a non-resolved/older/modded dump may nest under a
+    # `normal` difficulty block — recover from it, but only if it's a dict (a list
+    # `normal` must not crash, the bug the old `(... or {}).get(...)` form had).
+    normal = d.get("normal") if isinstance(d.get("normal"), dict) else {}
+    ings = d.get("ingredients") or normal.get("ingredients")
     if ings:
         parts_ing = _ing_list(ings)
         if parts_ing:
             parts.append(f"Ingredients: {', '.join(parts_ing)}")
     results = d.get("results")
+    if not isinstance(results, list):
+        results = normal.get("results")
     if isinstance(results, list):
         res_parts = _ing_list(results)
         if res_parts:
@@ -394,14 +400,22 @@ def main():
     )
     if not os.path.exists(dump_path):
         common.safe_print(f"ERROR: data-raw-dump.json not found at {dump_path}.")
-        common.safe_print("Produce it with `factorio --dump-data` (see factorio-export/*/SOURCE.txt),")
+        common.safe_print("Produce it with `factorio --dump-data` (see factorio-export/README.md),")
         common.safe_print("then set FACTORIO_DATA_DUMP or place it at the default path above.")
         raise SystemExit(1)
 
     version = _read_dump_version(dump_path)
     common.safe_print(f"Reading dump: {dump_path} (version {version})")
-    with open(dump_path, "r", encoding="utf-8") as f:
-        dump = json.load(f)
+    try:
+        with open(dump_path, "r", encoding="utf-8") as f:
+            dump = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        common.safe_print(f"ERROR: could not read/parse the dump at {dump_path}: {e}")
+        common.safe_print("A truncated/corrupt export won't parse — re-produce it with `factorio --dump-data`.")
+        raise SystemExit(1)
+    if not isinstance(dump, dict):
+        common.safe_print(f"ERROR: dump root is a {type(dump).__name__}, expected a JSON object (type -> name -> prototype).")
+        raise SystemExit(1)
 
     dry = common.dry_run_requested()
     if dry:
@@ -445,9 +459,16 @@ def main():
             }
             auditor.add(content, source=pname, node_type=ptype)
 
-    # Floor guard (#5): a large dump that produces zero records is a failure, not a
-    # silent success (e.g. a future dump format change breaking every formatter).
     auditor.note_source("data-raw-dump.json", os.path.getsize(dump_path), len(final))
+
+    # Refuse to touch the store if the dump parsed but produced ZERO records (an
+    # empty/wrong dump, or a future format change that breaks every formatter).
+    # Without this the orphan pass below would delete every existing row, silently
+    # wiping the whole store. note_source/summary only WARN; this hard-stops.
+    if not final:
+        common.safe_print("ERROR: the dump parsed but produced 0 prototype records — refusing to touch the store.")
+        common.safe_print("Check FACTORIO_DATA_DUMP points at a real Factorio data-raw-dump.json.")
+        raise SystemExit(1)
 
     # ---- Diff against what's stored: collect changed+new to (re)embed, orphans to drop.
     all_records = []
@@ -456,8 +477,10 @@ def main():
         if existing_hashes.get((pt, pn)) == rec["content_hash"]:
             skipped_count += 1
             continue
-        changed_count += 1 if (pt, pn) in existing_hashes else 0
-        added_count += 0 if (pt, pn) in existing_hashes else 1
+        if (pt, pn) in existing_hashes:
+            changed_count += 1
+        else:
+            added_count += 1
         all_records.append({
             "prototype_type": pt,
             "prototype_name": pn,
@@ -466,6 +489,7 @@ def main():
             "version": version,
             "content_hash": rec["content_hash"],
         })
+    # `final` is non-empty here (guarded above), so this can never delete the store.
     orphan_keys = sorted(set(existing_hashes) - set(final)) if (table is not None and existing_hashes) else []
 
     common.safe_print(

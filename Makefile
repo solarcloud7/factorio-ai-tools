@@ -49,7 +49,7 @@ ingest-repos:
 	$(PY) -m factorio_ai_tools.ingest.ingest_github_repo --repo-url https://github.com/notnotmelon/maraxsis.git
 
 # Reads a Factorio `--dump-data` export (no clone needed). Produce the dump from a
-# vanilla install (see factorio-export/*/SOURCE.txt) and point FACTORIO_DATA_DUMP at
+# vanilla install (see factorio-export/README.md) and point FACTORIO_DATA_DUMP at
 # it, or place it at the default factorio-export/vanilla_<ver>/ path. Errors loudly
 # if the dump is missing — this store can't be built without it.
 ingest-prototypes:

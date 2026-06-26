@@ -4,6 +4,11 @@ The ingester reads Factorio's `--dump-data` JSON (resolved `data.raw`), so these
 fixtures are plain dicts shaped like the dump — no Lua parsing, no DB, no embedder.
 """
 
+import json
+
+import pytest
+
+from factorio_ai_tools.ingest import ingest_prototypes
 from factorio_ai_tools.ingest.ingest_prototypes import (
     _category_for,
     _recipe_categories,
@@ -143,3 +148,51 @@ def test_unsupported_type_returns_none():
 
 def test_category_for_non_recipe_non_item_is_empty():
     assert _category_for({"type": "technology", "name": "t"}) == ""
+
+
+# --- `normal` difficulty-block fallback (non-resolved / modded / older dumps) ---
+
+def test_recipe_normal_dict_fallback_recovers_ingredients():
+    # A non-flat dump nests ingredients/results under a `normal` dict; recover them.
+    d = {"type": "recipe", "name": "r", "categories": ["crafting"],
+         "normal": {"ingredients": [{"name": "iron-plate", "amount": 2}],
+                    "results": [{"name": "r", "amount": 1}]}}
+    out = format_prototype(d)
+    assert "Ingredients: iron-plate ×2" in out
+    assert "Results: r ×1" in out
+
+
+def test_recipe_normal_as_list_does_not_crash():
+    # A LIST-valued `normal` is the shape that used to crash _format_recipe; it must
+    # be ignored, not raise.
+    d = {"type": "recipe", "name": "r", "categories": ["crafting"], "normal": ["a", "b"]}
+    out = format_prototype(d)  # must not raise
+    assert "Recipe: r" in out and "Ingredients:" not in out
+
+
+# --- main() guards against bad dumps (dry-run: no DB connect, no embed/write) ----
+
+def _expect_main_aborts(tmp_path, monkeypatch, dump_text):
+    p = tmp_path / "data-raw-dump.json"
+    p.write_text(dump_text, encoding="utf-8")
+    monkeypatch.setenv("FACTORIO_DATA_DUMP", str(p))
+    monkeypatch.setenv("FACTORIO_MCP_DRY_RUN", "1")  # no LanceDB connect, no embed
+    with pytest.raises(SystemExit):
+        ingest_prototypes.main()
+
+
+def test_corrupt_dump_aborts(tmp_path, monkeypatch):
+    # A truncated/corrupt export must error cleanly, not raise a raw JSONDecodeError.
+    _expect_main_aborts(tmp_path, monkeypatch, "{ not valid json ")
+
+
+def test_non_dict_root_aborts(tmp_path, monkeypatch):
+    # A JSON array/scalar root must be caught, not crash on dump.items().
+    _expect_main_aborts(tmp_path, monkeypatch, "[1, 2, 3]")
+
+
+def test_zero_record_dump_refuses_to_touch_store(tmp_path, monkeypatch):
+    # A dump that parses but yields 0 recognized prototypes must REFUSE (the orphan
+    # pass would otherwise delete the whole store). Only unsupported types here.
+    _expect_main_aborts(tmp_path, monkeypatch,
+                        json.dumps({"sound": {"s": {"type": "sound", "name": "s"}}}))

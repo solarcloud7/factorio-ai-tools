@@ -598,11 +598,6 @@ PROTOTYPE_ENTITY_TYPES = frozenset({
     "cargo-bay",
 })
 
-PROTOTYPE_SPACE_AGE_TYPES = frozenset({
-    "quality", "planet", "space-location", "asteroid-chunk",
-    "surface-property", "plant",
-})
-
 PROTOTYPE_ITEM_TYPES = frozenset({
     "item", "ammo", "capsule", "gun", "rail-planner", "repair-tool",
     "selection-tool", "item-with-entity-data", "module", "tool", "armor",

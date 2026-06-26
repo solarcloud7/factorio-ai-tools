@@ -563,7 +563,8 @@ def search_factorio_prototypes(queries: list[str], prototype_type: str = None, l
                 vals = ", ".join("'" + t.replace("'", "''") + "'" for t in sorted(group))
                 where = f"prototype_type IN ({vals})"
             else:
-                where = f"prototype_type = '{prototype_type.replace(chr(39), chr(39) * 2)}'"
+                safe_pt = prototype_type.replace("'", "''")
+                where = f"prototype_type = '{safe_pt}'"
 
         for idx, query_vec in enumerate(query_vecs):
             results = hybrid_search(table_prototypes, queries[idx], query_vec, limit, where=where)

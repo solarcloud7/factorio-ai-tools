@@ -17,11 +17,15 @@ data/
 # Clusterio checkout cloned by `make ingest-clusterio` (default CLUSTERIO_REPO)
 /clusterio/
 
-# factorio-data checkout cloned by `make ingest-prototypes` (FACTORIO_DATA_REPO)
+# factorio-data: a manual `wube/factorio-data` clone (for inspection); no ingest
+# target clones it into the repo root anymore (the prototypes store reads a dump).
 /factorio-data/
 
-# `factorio --dump-data` exports (large per-version JSON; Phase 2 ingest input)
-/factorio-export/
+# `factorio --dump-data` exports (large per-version JSON; the prototypes ingest
+# input). The per-version dump dirs are ignored; README.md is tracked so the
+# committed how-to that error messages point at exists in a fresh clone.
+/factorio-export/*
+!/factorio-export/README.md
 
 # Build/deploy artifact produced by `make package-dbs` / `make deploy-dbs`
 factorio_lancedb.zip

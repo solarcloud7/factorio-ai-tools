@@ -126,21 +126,22 @@ def run_checks():
             srv.encode_factorio_blueprint('{"blueprint":{"item":"blueprint","entities":[]}}')),
         "roundtrip ok"))
     check("get_mcp_version_info: real factorio version", version_real)
-    # prototypes_lancedb ships outside the release zip, so it's legitimately absent
-    # in PUBLISHED mode (record a pass-with-note). But in --local mode the store
-    # should be present, so a None handle there means a broken/missing local build
-    # and must FAIL — don't let a corrupt local store ship green (#7).
-    _published = bool(os.environ.get("FACTORIO_SMOKE_HOME"))
+    # prototypes_lancedb ships outside the release zip. Distinguish "not built" from
+    # "broken" by the store DIRECTORY (not an env var, which can leak across runs):
+    #   table opens           -> exercise the search
+    #   dir present, no table  -> corrupt/half-built local store -> FAIL (#7)
+    #   dir absent             -> not built / not in release zip -> pass-with-note
+    proto_dir = os.path.join(srv.DATA_DIR, "prototypes_lancedb")
     if srv.table_prototypes is not None:
         check("prototypes -> electronic-circuit recipe", lambda: has(
             srv.search_factorio_prototypes(["electronic circuit recipe ingredients"], prototype_type="recipe", limit=3),
             "electronic-circuit"))
-    elif _published:
-        results.append({"name": "prototypes -> electronic-circuit recipe", "ok": True,
-                        "detail": "skipped: prototypes_lancedb not in release zip (built via make ingest-prototypes)"})
-    else:
+    elif os.path.isdir(proto_dir):
         results.append({"name": "prototypes -> electronic-circuit recipe", "ok": False,
-                        "detail": "prototypes table failed to open in --local mode (run `make ingest-prototypes`)"})
+                        "detail": "prototypes store dir present but table failed to open (corrupt build)"})
+    else:
+        results.append({"name": "prototypes -> electronic-circuit recipe", "ok": True,
+                        "detail": "skipped: prototypes store not built (run `make ingest-prototypes`; not in release zip)"})
 
     print(CHECKS_MARKER + json.dumps(results))
 

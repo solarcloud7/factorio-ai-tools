@@ -1,7 +1,7 @@
 """Guard: every repo-clone dir a `make ingest-*` target creates at the repo root
 must have a .gitignore entry, so a stray `git add .` can't commit a vendored
-checkout. `factorio-data/` was briefly un-ignored (while `clusterio/` was) — this
-turns that class of miss into a red test instead of a lucky `git status` catch."""
+checkout. A clone dir was once briefly un-ignored — this turns that class of miss
+into a red test instead of a lucky `git status` catch."""
 
 import os
 
@@ -9,9 +9,10 @@ import pytest
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 
-# Dirs cloned into the repo root by `make ingest-clusterio` / `make ingest-prototypes`.
-# Add the new dir here (and to .gitignore) whenever an ingest target clones a repo.
-CLONE_DIRS = ["clusterio", "factorio-data"]
+# Dirs cloned into the repo root by a `make ingest-*` target. Add the new dir here
+# (and to .gitignore) whenever an ingest target clones a repo. (prototypes no longer
+# clones factorio-data — it reads a `--dump-data` JSON export.)
+CLONE_DIRS = ["clusterio"]
 
 
 def _gitignore_patterns():
