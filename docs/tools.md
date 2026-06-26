@@ -21,7 +21,7 @@ index or on a transient error.
 | `search_factorio_wiki` | `(queries, limit=5)` | wiki | — |
 | `search_factorio_forums` | `(queries, limit=5)` | forum | — |
 | `search_github_code` | `(queries, repo_name=None, limit=5)` | repo | `repo_name` (matched against `repo_url`) |
-| `search_factorio_prototypes` | `(queries, prototype_type=None, limit=5)` | prototypes | `prototype_type` |
+| `search_factorio_prototypes` | `(queries, prototype_type=None, limit=5)` | prototypes | `prototype_type` (umbrella `item`/`entity` expand to subtypes) |
 
 Filter values are escaped before use: single quotes are doubled for the SQL
 literal, and `LIKE` filters (`plugin`, `repo_name`) escape `% _ \` via

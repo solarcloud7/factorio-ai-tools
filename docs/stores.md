@@ -57,10 +57,12 @@ per-mod `mod_lancedb`.
 
 Exact numerical Factorio prototype values, one structured record per prototype.
 Columns: `prototype_type`, `prototype_name`, `category`, `content`, `version`,
-`content_hash`, `vector`. `search_factorio_prototypes` filters by `prototype_type`.
-The **vanilla baseline** (base + official DLC); modded games change `data.raw`, so a
-modded game differs. Built locally via `make ingest-prototypes` and **not** shipped
-in the release zip. Writes `version.txt`.
+`content_hash`, `vector`. `search_factorio_prototypes` filters by `prototype_type`
+(umbrella values `item`/`entity` expand to their raw subtypes). Built from Factorio's
+own `factorio --dump-data` JSON export (the fully-resolved `data.raw`, env
+`FACTORIO_DATA_DUMP`) — no Lua parsing. The **vanilla baseline** (base + official
+DLC); modded games change `data.raw`, so a modded game differs. Built locally via
+`make ingest-prototypes` and **not** shipped in the release zip. Writes `version.txt`.
 
 ## node_type vocabulary
 

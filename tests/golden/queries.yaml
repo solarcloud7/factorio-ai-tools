@@ -57,6 +57,17 @@ queries:
     query: "steam engine that generates electricity"
     expect: "steam-engine"
 
+  # --- Prototypes (prototypes_lancedb / prototypes, FTS on `content`) ---
+  - store: prototypes
+    query: "electronic circuit recipe ingredients and crafting time"
+    expect: "electronic-circuit"
+  - store: prototypes
+    query: "efficiency module power consumption reduction effect"
+    expect: "efficiency-module"
+  - store: prototypes
+    query: "legendary quality tier bonus"
+    expect: "legendary"
+
   # --- Wiki (wiki_lancedb / docs, vector-only — no FTS index) ---
   - store: wiki
     query: "how fast does a transport belt move items"

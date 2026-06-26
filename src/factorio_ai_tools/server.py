@@ -535,8 +535,11 @@ def search_factorio_prototypes(queries: list[str], prototype_type: str = None, l
 
     Args:
         queries: Semantic search queries.
-        prototype_type: Optional filter — "recipe", "item", "technology",
-                        "assembling-machine", "furnace", "quality", "planet", etc.
+        prototype_type: Optional filter. Umbrella values "item" (covers ammo,
+                        module, gun, armor, capsule, …) and "entity" (covers
+                        furnace, inserter, assembling-machine, …) expand to all
+                        their subtypes. Or pass an exact type: "recipe",
+                        "technology", "module", "furnace", "quality", "planet", …
         limit: Max results per query (1–20, default 5).
     """
     if table_prototypes is None:
@@ -550,11 +553,20 @@ def search_factorio_prototypes(queries: list[str], prototype_type: str = None, l
         query_vecs = model.encode(queries, normalize_embeddings=True)
         all_formatted_chunks = []
 
-        for idx, query_vec in enumerate(query_vecs):
-            where = None
-            if prototype_type:
+        # An umbrella value ("item"/"entity") expands to every raw subtype actually
+        # stored (ammo/module/gun…, furnace/inserter…); a specific subtype or
+        # recipe/fluid/technology/quality/… matches itself.
+        where = None
+        if prototype_type:
+            group = common.PROTOTYPE_TYPE_GROUPS.get(prototype_type)
+            if group:
+                vals = ", ".join("'" + t.replace("'", "''") + "'" for t in sorted(group))
+                where = f"prototype_type IN ({vals})"
+            else:
                 safe_pt = prototype_type.replace("'", "''")
                 where = f"prototype_type = '{safe_pt}'"
+
+        for idx, query_vec in enumerate(query_vecs):
             results = hybrid_search(table_prototypes, queries[idx], query_vec, limit, where=where)
 
             all_formatted_chunks.append(f"### Prototype results for query: '{queries[idx]}'")

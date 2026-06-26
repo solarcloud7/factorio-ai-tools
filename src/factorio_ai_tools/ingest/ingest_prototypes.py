@@ -1,43 +1,30 @@
 """Ingest Factorio prototype definitions into ``data/prototypes_lancedb``.
 
-Parses ``data:extend(...)`` calls from Lua files in the cloned ``factorio-data``
-repo (FACTORIO_DATA_REPO env, default ``<repo_root>/factorio-data``) and stores
-one structured text record per prototype. Covers base + Space Age prototypes.
-Incremental by (prototype_type, prototype_name) SHA-256. Writes version.txt.
+Reads Factorio's own ``--dump-data`` export (``data-raw-dump.json``) — the fully
+resolved ``data.raw`` as JSON, keyed ``type -> name -> prototype`` — and stores one
+structured text record per prototype holding exact numerical values. This is the
+**vanilla baseline** (base + Space Age DLC); a modded game's dump differs.
+
+Input path: ``FACTORIO_DATA_DUMP`` env, default
+``<repo_root>/factorio-export/vanilla_2.1.8/data-raw-dump.json``. Produce the dump
+with ``factorio --dump-data`` (see ``factorio-export/README.md``). Incremental by
+(prototype_type, prototype_name) SHA-256 via ``merge_insert`` upsert; writes
+``version.txt``.
 """
 
 import json
 import os
-from pathlib import Path
+import re
 
 from lancedb.pydantic import LanceModel, Vector
-from luaparser import ast as lua_ast
-from luaparser import astnodes
 
 from factorio_ai_tools.ingest import common
 
-WANTED_ENTITY_TYPES = frozenset({
-    "assembling-machine", "furnace", "rocket-silo", "mining-drill", "lab",
-    "boiler", "generator", "reactor", "beacon", "inserter", "transport-belt",
-    "splitter", "underground-belt", "storage-tank", "pipe", "pipe-to-ground",
-    "train-stop", "locomotive", "cargo-wagon", "fluid-wagon", "electric-pole",
-    "offshore-pump", "accumulator", "solar-panel", "electric-turret",
-    "fluid-turret", "ammo-turret", "pump", "cargo-landing-pad",
-    "space-platform-hub", "asteroid-collector", "agricultural-tower",
-    "thruster", "lightning-attractor", "fusion-reactor", "fusion-generator",
-    "cargo-bay",
-})
-
-SPACE_AGE_TYPES = frozenset({
-    "quality", "planet", "space-location", "asteroid-chunk",
-    "surface-property", "plant",
-})
-
-ITEM_TYPES = frozenset({
-    "item", "ammo", "capsule", "gun", "rail-planner", "repair-tool",
-    "selection-tool", "item-with-entity-data", "module", "tool", "armor",
-    "mining-tool", "spidertron-remote", "space-platform-starter-pack",
-})
+# Routing vocab lives in common.py (shared with server.py's filter). Alias the
+# names the formatters/dispatch use. Space-age types (quality/planet/…) dispatch
+# via literals in format_prototype, not a set, so there's no SPACE_AGE_TYPES.
+WANTED_ENTITY_TYPES = common.PROTOTYPE_ENTITY_TYPES
+ITEM_TYPES = common.PROTOTYPE_ITEM_TYPES
 
 
 class PrototypeRecord(LanceModel):
@@ -50,110 +37,14 @@ class PrototypeRecord(LanceModel):
     vector: Vector(common.EMBEDDING_DIM)
 
 
-# --- Lua parsing helpers -------------------------------------------------------
-
-def _get_key(node):
-    """String key from a Name or String field-key node; None otherwise."""
-    if isinstance(node, astnodes.Name):
-        v = node.id
-        return v.decode() if isinstance(v, bytes) else str(v)
-    if isinstance(node, astnodes.String):
-        v = node.s
-        return v.decode() if isinstance(v, bytes) else str(v)
-    return None
-
-
-def _lua_table_to_python(node):
-    """Recursively convert a luaparser AST node to a Python primitive/dict/list.
-
-    Returns None for un-evaluable expressions (Concat, FunctionCall, etc.) so
-    callers can filter parametric entries (name = 'base-' .. n) safely.
-    """
-    if isinstance(node, astnodes.String):
-        v = node.s
-        return v.decode() if isinstance(v, bytes) else str(v)
-    if isinstance(node, astnodes.Number):
-        return node.n
-    if isinstance(node, astnodes.UMinusOp):
-        # Negative literals parse as unary-minus over a Number (e.g. -0.3, -273),
-        # NOT as a negative Number. Without this, every negative value (module
-        # consumption bonuses, sub-zero temperatures, planet distances) drops to None.
-        operand = _lua_table_to_python(node.operand)
-        return -operand if isinstance(operand, (int, float)) else None
-    if isinstance(node, astnodes.TrueExpr):
-        return True
-    if isinstance(node, astnodes.FalseExpr):
-        return False
-    if isinstance(node, astnodes.Nil):
-        return None
-    if isinstance(node, astnodes.Name):
-        return None  # bare variable ref — not evaluable
-    if isinstance(node, astnodes.Table):
-        positional = [f.value for f in node.fields if f.key is None]
-        named = [(f.key, f.value) for f in node.fields if f.key is not None]
-        if positional and not named:
-            return [_lua_table_to_python(v) for v in positional]
-        result = {}
-        for k_node, v_node in named:
-            key = _get_key(k_node)
-            if key is not None:
-                result[key] = _lua_table_to_python(v_node)
-        # Mixed positional+named table: preserve positional entries under Lua's
-        # 1-based integer keys so they aren't silently dropped (string-keyed
-        # accessors downstream are unaffected by the extra integer keys).
-        for i, v_node in enumerate(positional, start=1):
-            result.setdefault(i, _lua_table_to_python(v_node))
-        return result
-    return None  # Concat, Call, Index, BinOp, etc.
-
-
-def extract_data_extend_calls(src):
-    """Walk the Lua AST for ``data:extend({...})`` calls; return entry dicts."""
-    try:
-        tree = lua_ast.parse(src)
-    except Exception as e:
-        common.safe_print(f"luaparser error: {e}")
-        return _regex_fallback_extract(src)
-
-    results = []
-    for node in lua_ast.walk(tree):
-        if not isinstance(node, astnodes.Invoke):
-            continue
-        if _get_key(node.source) != "data" or _get_key(node.func) != "extend":
-            continue
-        if not node.args:
-            continue
-        arg = node.args[0]
-        if not isinstance(arg, astnodes.Table):
-            continue
-        for field in arg.fields:
-            if not isinstance(field.value, astnodes.Table):
-                continue
-            entry = _lua_table_to_python(field.value)
-            if isinstance(entry, dict):
-                results.append(entry)
-    return results
-
-
-def _regex_fallback_extract(src):
-    """Fallback when luaparser fails: returns nothing and warns.
-
-    A regex-only pass would produce entries with type+name but no ingredients,
-    effects, or other data — stubs that would embed as correctly-named but
-    numerically empty records, silently poisoning prototype search results.
-    Returning [] is safer: miss the file entirely rather than insert bad data.
-    """
-    common.safe_print("  WARNING: luaparser failed on this file; skipping it entirely (no stubs inserted).")
-    return []
-
-
 # --- Content formatters -------------------------------------------------------
 
 def _ing_list(ings):
-    """Format ingredients/results list into 'name ×amount' strings.
+    """Format ingredients/results into 'name ×amount' strings.
 
-    Handles flat amounts, ranged amounts (amount_min/amount_max), and the
-    old positional shorthand {"iron-plate", 1}.
+    Handles the resolved dump shapes: dicts ({name, amount} or
+    {name, amount_min/amount_max}) and the positional ['name', amount] form used
+    by technology unit ingredients.
     """
     if not isinstance(ings, list):
         return []
@@ -174,24 +65,42 @@ def _ing_list(ings):
     return out
 
 
+def _recipe_categories(d):
+    """Recipe crafting categories. Factorio 2.1's resolved dump normalizes these
+    to a `categories` LIST (a recipe can belong to several, e.g. electronic-circuit
+    is ['crafting', 'electromagnetics']); older/source Lua used a singular
+    `category` string. Return a list of category names (may be empty)."""
+    cats = d.get("categories")
+    if isinstance(cats, list):
+        return [c for c in cats if isinstance(c, str)]
+    c = d.get("category")
+    return [c] if isinstance(c, str) else []
+
+
 def _format_recipe(d):
     parts = [f"Recipe: {d['name']}"]
-    cat = d.get("category") or "crafting"
-    parts.append(f"Category: {cat}")
-    # Factorio's engine default is 0.5s when energy_required is absent from the Lua
+    cats = _recipe_categories(d) or ["crafting"]
+    parts.append(f"Category: {', '.join(cats)}")
+    # The dump omits energy_required when it's the engine default (0.5s).
     e = d.get("energy_required", 0.5)
     parts.append(f"Crafting time: {e}s")
     if d.get("enabled") is False:
         parts.append("Enabled: false (unlocked by technology)")
     if d.get("allow_productivity"):
         parts.append("Allow productivity modules: yes")
-    ings = d.get("ingredients") or (d.get("normal") or {}).get("ingredients")
+    # Resolved 2.1 dumps are flat; a non-resolved/older/modded dump may nest under a
+    # `normal` difficulty block — recover from it, but only if it's a dict (a list
+    # `normal` must not crash, the bug the old `(... or {}).get(...)` form had).
+    normal = d.get("normal") if isinstance(d.get("normal"), dict) else {}
+    ings = d.get("ingredients") or normal.get("ingredients")
     if ings:
         parts_ing = _ing_list(ings)
         if parts_ing:
             parts.append(f"Ingredients: {', '.join(parts_ing)}")
-    results = d.get("results") or (d.get("normal") or {}).get("results")
-    if results and isinstance(results, list):
+    results = d.get("results")
+    if not isinstance(results, list):
+        results = normal.get("results")
+    if isinstance(results, list):
         res_parts = _ing_list(results)
         if res_parts:
             parts.append(f"Results: {', '.join(res_parts)}")
@@ -226,11 +135,18 @@ def _format_item(d):
         if isinstance(eff, dict):
             bonuses = []
             for k, v in eff.items():
-                bonus = v.get("bonus") if isinstance(v, dict) else v if isinstance(v, (int, float)) else None
-                if bonus is not None:
-                    # Module effects are fractional multipliers (0.5 -> +50%); a
-                    # whole-number bonus like 1 is still +100%, so format ints as
-                    # percentages too (the <100 guard avoids mangling raw counts).
+                # Module effects in the dump are scalars ({consumption: -0.3}); older
+                # shapes nested {bonus: ...}. Exclude bool (subclass of int) so a
+                # flag-style effect isn't rendered as a fake '+100%'.
+                if isinstance(v, dict):
+                    bonus = v.get("bonus")
+                elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                    bonus = v
+                else:
+                    bonus = None
+                if bonus is not None and not isinstance(bonus, bool):
+                    # Fractional multipliers (0.5 -> +50%); the <100 guard avoids
+                    # mangling a raw count into a percentage.
                     bonuses.append(f"{k}: {bonus:+.0%}" if isinstance(bonus, (int, float)) and abs(bonus) < 100 else f"{k}: {bonus}")
             if bonuses:
                 parts.append(f"Module effects: {', '.join(bonuses)}")
@@ -426,25 +342,80 @@ def format_prototype(d):
     return None
 
 
+def _category_for(d):
+    """The `category` column value: a recipe's primary crafting category, or an
+    item's subgroup. Empty for everything else."""
+    pt = d.get("type")
+    if pt == "recipe":
+        cats = _recipe_categories(d)
+        return cats[0] if cats else "crafting"
+    if pt in ITEM_TYPES:
+        return d.get("subgroup") or ""
+    return ""
+
+
 # --- Main ingestion loop -------------------------------------------------------
 
+def _read_dump_version(dump_path):
+    """Version string for the dump. The data.raw JSON carries no game version, so:
+    a sibling version.txt (written at dump time) -> FACTORIO_VERSION env ->
+    a 'vanilla_X.Y.Z' parent-dir name -> 'unknown'."""
+    sibling = os.path.join(os.path.dirname(dump_path), "version.txt")
+    if os.path.exists(sibling):
+        try:
+            with open(sibling, "r", encoding="utf-8") as f:
+                v = f.read().strip()
+            if v:
+                return v
+        except OSError:
+            pass
+    env = os.environ.get("FACTORIO_VERSION")
+    if env:
+        return env
+    m = re.search(r"(\d+\.\d+\.\d+)", os.path.basename(os.path.dirname(dump_path)))
+    return m.group(1) if m else "unknown"
+
+
+def _delete_keys(table, keys):
+    """Delete rows for a list of (prototype_type, prototype_name) keys, chunked into
+    a few OR-predicates so a big version bump is a handful of commits, not N."""
+    for i in range(0, len(keys), 200):
+        clauses = []
+        for pt, pn in keys[i:i + 200]:
+            spt = pt.replace("'", "''")
+            spn = pn.replace("'", "''")
+            clauses.append(f"(prototype_type = '{spt}' AND prototype_name = '{spn}')")
+        table.delete(" OR ".join(clauses))
+
+
+def _write_version(db_path, version):
+    with open(os.path.join(db_path, "version.txt"), "w", encoding="utf-8") as f:
+        f.write(version)
+
+
 def main():
-    repo_path = os.environ.get("FACTORIO_DATA_REPO",
-                               os.path.join(common.REPO_ROOT, "factorio-data"))
-    if not os.path.exists(repo_path):
-        common.safe_print(f"ERROR: factorio-data repo not found at {repo_path}.")
-        common.safe_print("Run: git clone --depth 1 https://github.com/wube/factorio-data.git factorio-data")
+    dump_path = os.environ.get(
+        "FACTORIO_DATA_DUMP",
+        os.path.join(common.REPO_ROOT, "factorio-export", "vanilla_2.1.8", "data-raw-dump.json"),
+    )
+    if not os.path.exists(dump_path):
+        common.safe_print(f"ERROR: data-raw-dump.json not found at {dump_path}.")
+        common.safe_print("Produce it with `factorio --dump-data` (see factorio-export/README.md),")
+        common.safe_print("then set FACTORIO_DATA_DUMP or place it at the default path above.")
         raise SystemExit(1)
 
-    info_path = os.path.join(repo_path, "base", "info.json")
-    version = "unknown"
-    if os.path.exists(info_path):
-        try:
-            with open(info_path, "r", encoding="utf-8") as f:
-                version = json.load(f).get("version", "unknown")
-        except (OSError, json.JSONDecodeError):
-            pass
-    common.safe_print(f"Factorio data version: {version}")
+    version = _read_dump_version(dump_path)
+    common.safe_print(f"Reading dump: {dump_path} (version {version})")
+    try:
+        with open(dump_path, "r", encoding="utf-8") as f:
+            dump = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        common.safe_print(f"ERROR: could not read/parse the dump at {dump_path}: {e}")
+        common.safe_print("A truncated/corrupt export won't parse — re-produce it with `factorio --dump-data`.")
+        raise SystemExit(1)
+    if not isinstance(dump, dict):
+        common.safe_print(f"ERROR: dump root is a {type(dump).__name__}, expected a JSON object (type -> name -> prototype).")
+        raise SystemExit(1)
 
     dry = common.dry_run_requested()
     if dry:
@@ -455,74 +426,58 @@ def main():
         db, db_path = common.connect_store("prototypes_lancedb")
         table = common.ensure_table(db, "prototypes", PrototypeRecord)
 
-    # Scan all <dlc>/prototypes/ dirs at the repo root so quality/, elevated-rails/,
-    # and any future DLCs are included automatically without code changes.
-    search_roots = sorted(
-        child / "prototypes"
-        for child in Path(repo_path).iterdir()
-        if child.is_dir() and (child / "prototypes").is_dir()
-    )
-    lua_files = []
-    for root in search_roots:
-        lua_files.extend(root.rglob("*.lua"))
-    common.safe_print(f"Found {len(lua_files)} Lua files.")
-
     existing_hashes = {}
     if table is not None and len(table) > 0:
-        rows = table.search().select(["prototype_type", "prototype_name", "content_hash"]).limit(200_000).to_list()
+        rows = table.search().select(["prototype_type", "prototype_name", "content_hash"]).limit(500_000).to_list()
         for row in rows:
-            key = (row["prototype_type"], row["prototype_name"])
-            existing_hashes[key] = row["content_hash"]
+            existing_hashes[(row["prototype_type"], row["prototype_name"])] = row["content_hash"]
     common.safe_print(f"Existing records: {len(existing_hashes)}")
 
-    # ---- Pass 1: parse every file, keeping the LAST definition per key.
-    # search_roots is sorted (base/ before space-age/, quality/, ...), so a DLC
-    # override of a base prototype wins. Dedup MUST complete before any table
-    # mutation: the old per-occurrence approach could delete the row for the base
-    # definition and then skip the (unchanged-vs-stored) DLC definition, dropping
-    # the prototype from the store entirely on every incremental re-run.
+    # ---- Walk the resolved data.raw (type -> name -> prototype). Only wanted types
+    # format to content; everything else (graphics/sound/particles/...) is skipped.
+    # explosion_per_source=None: one record per prototype, no explosion risk.
+    auditor = common.ChunkAuditor("prototypes_lancedb", explosion_per_source=None)
     final = {}  # (pt, pn) -> {"content", "category", "content_hash"}
-    skipped_para = 0
-    for lua_file in lua_files:
-        try:
-            src = lua_file.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+    skipped_unsupported = 0
+    for ptype, protos in dump.items():
+        if not isinstance(protos, dict):
             continue
-        for entry in extract_data_extend_calls(src):
-            pt = entry.get("type")
-            pn = entry.get("name")
-            if not isinstance(pt, str) or not isinstance(pn, str):
-                skipped_para += 1
+        for pname, raw in protos.items():
+            if not isinstance(raw, dict):
                 continue
-            content = format_prototype(entry)
+            d = dict(raw)
+            d.setdefault("type", ptype)
+            d.setdefault("name", pname)
+            content = format_prototype(d)
             if content is None:
+                skipped_unsupported += 1
                 continue
-            category = ""
-            if pt == "recipe":
-                category = entry.get("category") or "crafting"
-            elif pt in ITEM_TYPES:
-                category = entry.get("subgroup") or ""
-            final[(pt, pn)] = {
+            final[(ptype, pname)] = {
                 "content": content,
-                "category": category,
+                "category": _category_for(d),
                 "content_hash": common.get_hash(content),
             }
+            auditor.add(content, source=pname, node_type=ptype)
 
-    # ---- Pass 2: diff the final, deduplicated set against what is already stored.
-    # explosion_per_source=None: each prototype is exactly one record, no explosion risk
-    auditor = common.ChunkAuditor("prototypes_lancedb", explosion_per_source=None)
+    auditor.note_source("data-raw-dump.json", os.path.getsize(dump_path), len(final))
+
+    # Refuse to touch the store if the dump parsed but produced ZERO records (an
+    # empty/wrong dump, or a future format change that breaks every formatter).
+    # Without this the orphan pass below would delete every existing row, silently
+    # wiping the whole store. note_source/summary only WARN; this hard-stops.
+    if not final:
+        common.safe_print("ERROR: the dump parsed but produced 0 prototype records — refusing to touch the store.")
+        common.safe_print("Check FACTORIO_DATA_DUMP points at a real Factorio data-raw-dump.json.")
+        raise SystemExit(1)
+
+    # ---- Diff against what's stored: collect changed+new to (re)embed, orphans to drop.
     all_records = []
     skipped_count = changed_count = added_count = 0
     for (pt, pn), rec in final.items():
-        content_hash = rec["content_hash"]
-        auditor.add(rec["content"], source=pn, node_type=pt)
-        if existing_hashes.get((pt, pn)) == content_hash:
+        if existing_hashes.get((pt, pn)) == rec["content_hash"]:
             skipped_count += 1
             continue
-        if table is not None and (pt, pn) in existing_hashes:
-            safe_pt = pt.replace("'", "''")
-            safe_pn = pn.replace("'", "''")
-            table.delete(f"prototype_type = '{safe_pt}' AND prototype_name = '{safe_pn}'")
+        if (pt, pn) in existing_hashes:
             changed_count += 1
         else:
             added_count += 1
@@ -532,63 +487,53 @@ def main():
             "category": rec["category"],
             "content": rec["content"],
             "version": version,
-            "content_hash": content_hash,
+            "content_hash": rec["content_hash"],
         })
-
-    current_keys = set(final)
-    orphans_removed = False
-    if table is not None and len(table) > 0 and current_keys:
-        orphan_keys = set(existing_hashes) - current_keys
-        for ek in orphan_keys:
-            safe_pt = ek[0].replace("'", "''")
-            safe_pn = ek[1].replace("'", "''")
-            table.delete(f"prototype_type = '{safe_pt}' AND prototype_name = '{safe_pn}'")
-        if orphan_keys:
-            common.safe_print(f"Removed {len(orphan_keys)} orphaned records.")
-            orphans_removed = True
+    # `final` is non-empty here (guarded above), so this can never delete the store.
+    orphan_keys = sorted(set(existing_hashes) - set(final)) if (table is not None and existing_hashes) else []
 
     common.safe_print(
         f"Skipped {skipped_count} unchanged | {changed_count} changed | "
-        f"{added_count} new | {skipped_para} parametric/unsupported skipped"
+        f"{added_count} new | {len(orphan_keys)} orphaned | {skipped_unsupported} unsupported types"
     )
     auditor.summary()
-
     if dry:
         return
-    if not all_records:
-        if orphans_removed:
-            common.safe_print("Removed orphaned rows; rebuilding FTS index.")
-            try:
-                table.create_fts_index("content", replace=True)
-            except Exception as e:
-                common.safe_print(f"FTS index skipped: {e}")
-        else:
-            common.safe_print("Database is perfectly up to date!")
-        _write_version(db_path, version)
-        return
 
-    model_emb = common.load_embedder()
-    batch_size = 100
-    for i in range(0, len(all_records), batch_size):
-        common.safe_print(f"Ingesting batch {i} to {i + batch_size}...")
-        batch = all_records[i:i + batch_size]
-        embeddings = common.embed([r["content"] for r in batch], model_emb)
-        for j, rec in enumerate(batch):
-            rec["vector"] = embeddings[j].tolist()
-        table.add(batch)
+    # ---- Embed FIRST (before any table mutation), then upsert atomically with
+    # merge_insert keyed on (type, name) — updates changed rows, inserts new ones,
+    # leaves unchanged rows untouched. No delete-before-add window (#3); no per-row
+    # delete loop (#545). Orphans (gone from the dump) are removed separately.
+    if all_records:
+        model_emb = common.load_embedder()
+        for i in range(0, len(all_records), 100):
+            common.safe_print(f"Embedding batch {i} to {i + 100}...")
+            batch = all_records[i:i + 100]
+            embeddings = common.embed([r["content"] for r in batch], model_emb)
+            for j, rec in enumerate(batch):
+                rec["vector"] = embeddings[j].tolist()
+        (table.merge_insert(["prototype_type", "prototype_name"])
+            .when_matched_update_all()
+            .when_not_matched_insert_all()
+            .execute(all_records))
 
-    try:
-        table.create_fts_index("content", replace=True)
-    except Exception as e:
-        common.safe_print(f"FTS index skipped: {e}")
+    if orphan_keys:
+        _delete_keys(table, orphan_keys)
+        common.safe_print(f"Removed {len(orphan_keys)} orphaned records.")
+
+    if all_records or orphan_keys:
+        try:
+            table.create_fts_index("content", replace=True)
+        except Exception as e:
+            common.safe_print(f"FTS index skipped: {e}")
+    else:
+        common.safe_print("Database is perfectly up to date!")
 
     _write_version(db_path, version)
-    common.safe_print(f"Ingestion complete! {len(all_records)} records written.")
-
-
-def _write_version(db_path, version):
-    with open(os.path.join(db_path, "version.txt"), "w", encoding="utf-8") as f:
-        f.write(version)
+    common.safe_print(
+        f"Ingestion complete! {len(all_records)} records embedded, "
+        f"{len(orphan_keys)} removed. Total in store: {len(final)}."
+    )
 
 
 if __name__ == "__main__":
