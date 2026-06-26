@@ -1,6 +1,6 @@
 """FastMCP server exposing the Factorio AI Tools search tools over MCP.
 
-Opens the five LanceDB stores under ``data/`` (each in its own try/except, so a
+Opens the six LanceDB stores under ``data/`` (each in its own try/except, so a
 missing store degrades only its tool rather than crashing the server), loads the
 shared embedding model once, and serves hybrid search (``common.hybrid_search``)
 plus the blueprint / mod-portal / version utilities and the
@@ -64,20 +64,21 @@ if os.path.exists(LOCAL_DATA_DIR) or os.getenv("FACTORIO_MCP_LOCAL_MODE"):
 else:
     DATA_DIR = USER_DATA_DIR
 
-# The release asset (factorio_lancedb.zip) bundles all of these; the bootstrap
-# only short-circuits when every one is already present, so a partial extract
-# (e.g. repo_lancedb alone) still triggers a re-download.
-ALL_STORES = ["factorio_lancedb", "clusterio_lancedb", "wiki_lancedb", "forum_lancedb", "repo_lancedb"]
+# Stores bundled in the release zip — used to trigger the bootstrap download.
+# prototypes_lancedb is built separately by `make ingest-prototypes` and is NOT
+# yet included in the release zip, so it must NOT be listed here or every user
+# without it will re-download the full zip on every server start indefinitely.
+RELEASE_STORES = ["factorio_lancedb", "clusterio_lancedb", "wiki_lancedb", "forum_lancedb", "repo_lancedb"]
 
 def ensure_databases():
-    missing = [s for s in ALL_STORES if not os.path.exists(os.path.join(DATA_DIR, s))]
+    missing = [s for s in RELEASE_STORES if not os.path.exists(os.path.join(DATA_DIR, s))]
     if not missing:
         return
     print(f"Databases missing {missing}; downloading to {DATA_DIR}...", file=sys.stderr)
     url = "https://github.com/solarcloud7/factorio-ai-tools/releases/latest/download/factorio_lancedb.zip"
     try:
         # Extracts ONLY the missing stores so a hand-built data/ is never clobbered.
-        added = common.ensure_stores(DATA_DIR, ALL_STORES, url=url)
+        added = common.ensure_stores(DATA_DIR, RELEASE_STORES, url=url)
         print(f"Databases installed: {added}", file=sys.stderr)
     except Exception as e:
         print(f"Failed to download databases: {e}", file=sys.stderr)
@@ -148,10 +149,17 @@ def get_mcp_version_info() -> str:
         with open(clus_path, "r", encoding="utf-8") as f:
             clus_v = f.read().strip()
             
+    proto_v = "unknown"
+    proto_path = os.path.join(db_path_prototypes, "version.txt")
+    if os.path.exists(proto_path):
+        with open(proto_path, "r", encoding="utf-8") as f:
+            proto_v = f.read().strip()
+
     return json.dumps({
         "tool_version": TOOL_VERSION,
         "factorio_docs_version": fac_v,
-        "clusterio_code_version": clus_v
+        "clusterio_code_version": clus_v,
+        "factorio_prototypes_version": proto_v,
     }, indent=2)
 
 @mcp.prompt()
@@ -177,6 +185,7 @@ When building a Clusterio plugin, you must implement logic across these layers, 
 When writing Lua code, always use the `search_factorio_docs` tool to verify the syntax of the Control API or the properties of the Data Phase Prototypes.
 When dealing with Node.js IPC or Plugin architecture, always use `search_clusterio_code`.
 For gameplay mechanics, formulas, ratios, fluid mechanics, or general game knowledge, use the `search_factorio_wiki` tool.
+For exact numerical values — recipe ingredients/amounts, crafting times, assembler speeds, technology research costs, quality tier bonuses, planet surface conditions — use `search_factorio_prototypes`. Combine it with `search_factorio_wiki` when a complete answer needs both precise values AND gameplay context.
 Never assume a method or concept exists without verifying it in the docs.
 You also have the ability to decode and encode Factorio Blueprint strings using `decode_factorio_blueprint` and `encode_factorio_blueprint`. You can use these tools to dynamically inspect, generate, or optimize factory layouts directly for the user!"""
 
@@ -443,6 +452,14 @@ def encode_factorio_blueprint(json_string: str) -> str:
 import urllib.request
 import platform
 
+db_path_prototypes = os.path.join(DATA_DIR, "prototypes_lancedb")
+try:
+    db_prototypes = lancedb.connect(db_path_prototypes)
+    table_prototypes = db_prototypes.open_table("prototypes")
+except Exception as e:
+    print(f"Warning: Could not open prototypes table. Run ingest_prototypes.py first. Error: {e}", file=sys.stderr)
+    table_prototypes = None
+
 db_path_repo = os.path.join(DATA_DIR, "repo_lancedb")
 try:
     db_repo = lancedb.connect(db_path_repo)
@@ -500,6 +517,62 @@ def search_github_code(queries: list[str], repo_name: str = None, limit: int = 5
         
     except Exception as e:
         return f"Error executing mod code search: {str(e)}"
+
+@optional_tool()
+def search_factorio_prototypes(queries: list[str], prototype_type: str = None, limit: int = 5) -> str:
+    """
+    Search Factorio prototype definitions for exact numerical data: recipe ingredients
+    and crafting times, assembler speeds and energy usage, technology research costs,
+    item stack sizes, quality tier bonuses, and Space Age planet/surface conditions.
+
+    Use this tool when you need PRECISE VALUES from the game data files — not
+    explanations of how things work (use search_factorio_wiki for that) and not
+    modding API syntax (use search_factorio_docs for that). Example use cases:
+    - "What are the ingredients and crafting time for electronic-circuit?"
+    - "Which assembling machines can craft recipes in category 'crafting'?"
+    - "What does the legendary quality tier do to crafting speed?"
+    - "What surface conditions does Vulcanus have?"
+
+    Args:
+        queries: Semantic search queries.
+        prototype_type: Optional filter — "recipe", "item", "technology",
+                        "assembling-machine", "furnace", "quality", "planet", etc.
+        limit: Max results per query (1–20, default 5).
+    """
+    if table_prototypes is None:
+        return "Error: Prototypes table not found. Run ingest_prototypes.py first."
+
+    if not queries:
+        return "No queries provided."
+
+    try:
+        limit = min(max(1, limit), 20)
+        query_vecs = model.encode(queries, normalize_embeddings=True)
+        all_formatted_chunks = []
+
+        for idx, query_vec in enumerate(query_vecs):
+            where = None
+            if prototype_type:
+                safe_pt = prototype_type.replace("'", "''")
+                where = f"prototype_type = '{safe_pt}'"
+            results = hybrid_search(table_prototypes, queries[idx], query_vec, limit, where=where)
+
+            all_formatted_chunks.append(f"### Prototype results for query: '{queries[idx]}'")
+            if not results:
+                all_formatted_chunks.append("No results found.")
+            else:
+                for row in results:
+                    header = f"**{row['prototype_type']}: {row['prototype_name']}**"
+                    if row.get("category"):
+                        header += f" (category: {row['category']})"
+                    all_formatted_chunks.append(f"{header}\n{row['content']}")
+            all_formatted_chunks.append("---")
+
+        return "\n\n".join(all_formatted_chunks)
+
+    except Exception as e:
+        return f"Error executing prototype search: {str(e)}"
+
 
 @optional_tool()
 def factorio_mod_portal_analyzer(mod_name: str) -> str:

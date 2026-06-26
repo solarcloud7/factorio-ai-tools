@@ -85,9 +85,9 @@ then ship:
 | Target | Action |
 |---|---|
 | `make sync` | Install deps; swap in the CUDA torch wheel if an NVIDIA GPU is present. |
-| `make ingest-all` | Build/refresh all five stores (each is incremental/idempotent). |
+| `make ingest-all` | Build/refresh all six stores (each is incremental/idempotent). |
 | `make compact` | Compact every store (prune version history). |
-| `make package-dbs` | Zip the five stores into `factorio_lancedb.zip`. |
+| `make package-dbs` | Zip the five release stores (all except `prototypes_lancedb`, which is built locally) into `factorio_lancedb.zip`. |
 | `make deploy-dbs` | `compact` + `package-dbs` + upload the zip to the latest release. |
 | `make test` | Run the offline test suite. |
 | `make eval` | Retrieval recall@k (vector vs FTS vs hybrid) on the golden set. |

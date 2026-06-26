@@ -1,6 +1,6 @@
 # LanceDB stores
 
-Five distinct-schema stores live under `data/`, each built by one ingest script
+Six stores live under `data/`, each built by one ingest script
 and queried by one server tool. Every store shares the embedding contract: a
 `vector` column of **768** float32s, L2-normalized (`common.EMBEDDING_DIM`). Each
 ingester also builds a full-text-search (FTS) index on its text column, so a
@@ -16,6 +16,7 @@ schema, so changing a schema below forces a full re-ingest of that store.
 | `forum_lancedb` | `forum` | [ingest_forum.py](../src/factorio_ai_tools/ingest/ingest_forum.py) | `search_factorio_forums` | `content` |
 | `clusterio_lancedb` | `codebase` | [ingest_clusterio.py](../src/factorio_ai_tools/ingest/ingest_clusterio.py) | `search_clusterio_code` | `content` |
 | `repo_lancedb` | `codebase` | [ingest_github_repo.py](../src/factorio_ai_tools/ingest/ingest_github_repo.py) | `search_github_code` | `content` |
+| `prototypes_lancedb` | `prototypes` | [ingest_prototypes.py](../src/factorio_ai_tools/ingest/ingest_prototypes.py) | `search_factorio_prototypes` | `content` |
 
 ## factorio_lancedb → `docs`
 
@@ -51,6 +52,15 @@ One store holding **many** GitHub repos. Columns: `vector`, `repo_url`,
 `--local-path`); `search_github_code` scopes to one repo by matching `repo_name`
 against `repo_url`. Built by the generic ingester, which superseded the retired
 per-mod `mod_lancedb`.
+
+## prototypes_lancedb → `prototypes`
+
+Exact numerical Factorio prototype values, one structured record per prototype.
+Columns: `prototype_type`, `prototype_name`, `category`, `content`, `version`,
+`content_hash`, `vector`. `search_factorio_prototypes` filters by `prototype_type`.
+The **vanilla baseline** (base + official DLC); modded games change `data.raw`, so a
+modded game differs. Built locally via `make ingest-prototypes` and **not** shipped
+in the release zip. Writes `version.txt`.
 
 ## node_type vocabulary
 
