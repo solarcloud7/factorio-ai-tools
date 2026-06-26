@@ -55,15 +55,20 @@ per-mod `mod_lancedb`.
 
 ## prototypes_lancedb → `prototypes`
 
-Exact numerical Factorio prototype values, one structured record per prototype.
-Columns: `prototype_type`, `prototype_name`, `category`, `content`, `version`,
-`content_hash`, `vector`. `search_factorio_prototypes` filters by `prototype_type`
-(umbrella values `item`/`entity` expand to their raw subtypes). Built from Factorio's
-own `factorio --dump-data` JSON export (the fully-resolved `data.raw`, env
-`FACTORIO_DATA_DUMP`) — no Lua parsing. The **vanilla baseline** (base + official
-DLC); modded games change `data.raw`, so a modded game differs. Built locally via
-`make ingest-prototypes` (from a `--dump-data` export), then shipped in the release
-zip like the other stores. Writes `version.txt`.
+Exact numerical Factorio prototype values, one structured record per prototype
+**per version**. Columns: `prototype_type`, `prototype_name`, `category`, `content`,
+`version`, `content_hash`, `vector`. `search_factorio_prototypes` REQUIRES a
+`factorio_version` (`2.0.76` or `2.1.8` — values change between releases) and
+optionally filters by `prototype_type` (umbrella values `item`/`entity` expand to
+their raw subtypes). **Multi-version:** the dedup key and orphan-pruning are
+`(prototype_type, prototype_name, version)`-scoped, so each version is a separate
+`factorio-export/vanilla_<ver>/` dump and re-ingesting one version never touches
+another's rows. Built from Factorio's own `factorio --dump-data` JSON export (the
+fully-resolved `data.raw`, env `FACTORIO_DATA_DUMP` for a single dump, else all
+`vanilla_*/` dumps) — no Lua parsing. The **vanilla baseline** (base + official DLC);
+modded games change `data.raw`, so a modded game differs. Built locally via
+`make ingest-prototypes`, then shipped in the release zip like the other stores.
+Writes a comma-joined `version.txt` of every version present.
 
 ## node_type vocabulary
 

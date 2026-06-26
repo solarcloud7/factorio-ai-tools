@@ -90,3 +90,22 @@ def test_search_factorio_docs_requires_concrete_version():
     assert "factorio_version: str = None" in src, "factorio_version must have no default (be required)"
     assert "SUPPORTED_FACTORIO_VERSIONS" in src, "docs tool must validate the version against the pinned set"
     assert 'factorio_version="latest"' not in src, "the 'latest' default must be gone"
+
+
+def test_prototype_versions_are_subset_of_supported():
+    """The prototypes store only holds 2.x dump-derived versions (1.1 has no practical
+    --dump-data), so its set must be a subset of the docs/supported set."""
+    assert set(common.SUPPORTED_PROTOTYPE_VERSIONS) <= set(common.SUPPORTED_FACTORIO_VERSIONS)
+    assert "1.1.110" not in common.SUPPORTED_PROTOTYPE_VERSIONS, "1.1 has no dump-based prototypes"
+    assert {"2.0.76", "2.1.8"} <= set(common.SUPPORTED_PROTOTYPE_VERSIONS)
+
+
+def test_search_factorio_prototypes_requires_concrete_version():
+    """The prototypes tool must REQUIRE a concrete version and validate against the
+    prototype-version set — values are version-specific, so there is no default."""
+    src = open(SERVER, encoding="utf-8").read()
+    assert "def search_factorio_prototypes(" in src
+    # the version param exists with no default (required) and is validated against the set
+    assert "factorio_version: str = None" in src
+    assert "SUPPORTED_PROTOTYPE_VERSIONS" in src, "prototypes tool must validate against the prototype-version set"
+    assert "version = '" in src, "prototypes tool must scope the query to the requested version"

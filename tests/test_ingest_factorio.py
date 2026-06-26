@@ -51,7 +51,7 @@ def test_factorio_e2e_populates_both_versions(tmp_data_dir, fake_embedder, monke
 
     t = lancedb.connect(str(tmp_data_dir / "factorio_lancedb")).open_table("docs")
     versions = {r["version"] for r in t.search().limit(10000).to_list()}
-    # Both pinned concrete versions must exist; the moving "latest" label is gone
+    # All pinned concrete versions must exist; the moving "latest" label is gone
     # (search_factorio_docs requires a concrete version).
-    assert {"1.1.110", "2.0.76"} <= versions and "latest" not in versions
+    assert {"1.1.110", "2.0.76", "2.1.8"} <= versions and "latest" not in versions
     assert (tmp_data_dir / "factorio_lancedb" / "version.txt").exists()
