@@ -80,18 +80,15 @@ def run_checks():
         return d.startswith(os.path.abspath(expect)), f"DATA_DIR={d}"
 
     def stores_present():
-        # Check only the release-zip stores; prototypes_lancedb is built separately.
         present = [x for x in srv.RELEASE_STORES if os.path.isdir(os.path.join(srv.DATA_DIR, x))]
         n = len(srv.RELEASE_STORES)
         return len(present) == n, f"{len(present)}/{n} @ {srv.DATA_DIR}"
 
     def tables_open():
-        # Only the release-zip stores are required: prototypes_lancedb is built
-        # separately (make ingest-prototypes) and is NOT in the published zip, so
-        # its table is legitimately None in published mode — gating on it here
-        # would red the smoke on every correctly-deployed release.
+        # All six stores ship in the release zip, so all six must open.
         handles = {"factorio": srv.table_factorio, "clusterio": srv.table_clusterio,
-                   "wiki": srv.table_wiki, "forum": srv.table_forum, "repo": srv.table_repo}
+                   "wiki": srv.table_wiki, "forum": srv.table_forum, "repo": srv.table_repo,
+                   "prototypes": srv.table_prototypes}
         missing = [k for k, v in handles.items() if v is None]
         n = len(handles)
         return not missing, (f"all {n} open" if not missing else f"missing: {missing}")
@@ -113,7 +110,7 @@ def run_checks():
         return bool(fac) and fac != "unknown", f"factorio_docs_version={fac!r}"
 
     check("Layer A: data downloaded to the isolated home", layer_a_downloaded)
-    check("all 5 release stores present", stores_present)
+    check("all 6 release stores present", stores_present)
     check("tables open", tables_open)
     # anchors are query-independent + success-only (not in the query echo / errors):
     check("docs -> teleport method", lambda: has(srv.search_factorio_docs(["how do I teleport an entity"], limit=5), "method_teleport"))
@@ -126,22 +123,15 @@ def run_checks():
             srv.encode_factorio_blueprint('{"blueprint":{"item":"blueprint","entities":[]}}')),
         "roundtrip ok"))
     check("get_mcp_version_info: real factorio version", version_real)
-    # prototypes_lancedb ships outside the release zip. Distinguish "not built" from
-    # "broken" by the store DIRECTORY (not an env var, which can leak across runs):
-    #   table opens           -> exercise the search
-    #   dir present, no table  -> corrupt/half-built local store -> FAIL (#7)
-    #   dir absent             -> not built / not in release zip -> pass-with-note
-    proto_dir = os.path.join(srv.DATA_DIR, "prototypes_lancedb")
+    # prototypes_lancedb now ships in the release zip, so it's mandatory: a None
+    # handle means a broken release/build and must FAIL (not a pass-with-note).
     if srv.table_prototypes is not None:
         check("prototypes -> electronic-circuit recipe", lambda: has(
             srv.search_factorio_prototypes(["electronic circuit recipe ingredients"], prototype_type="recipe", limit=3),
             "electronic-circuit"))
-    elif os.path.isdir(proto_dir):
-        results.append({"name": "prototypes -> electronic-circuit recipe", "ok": False,
-                        "detail": "prototypes store dir present but table failed to open (corrupt build)"})
     else:
-        results.append({"name": "prototypes -> electronic-circuit recipe", "ok": True,
-                        "detail": "skipped: prototypes store not built (run `make ingest-prototypes`; not in release zip)"})
+        results.append({"name": "prototypes -> electronic-circuit recipe", "ok": False,
+                        "detail": "prototypes table failed to open — store missing/corrupt in the release zip"})
 
     print(CHECKS_MARKER + json.dumps(results))
 

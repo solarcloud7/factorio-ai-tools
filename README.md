@@ -17,7 +17,7 @@ This project consists of six ingestion pipelines (sharing `ingest/common.py` for
 3. **Clusterio Codebase (`ingest_clusterio.py` → `clusterio_lancedb`)**: AST-parses the Node.js/TypeScript Clusterio plugin architecture (tree-sitter).
 4. **Factorio Forums (`ingest_forum.py` → `forum_lancedb`)**: Scrapes a curated list of forum topics (`forum_links.txt`) for community solutions and discussions.
 5. **Generic GitHub Repos (`ingest_github_repo.py` → `repo_lancedb`)**: Clones and AST-parses (tree-sitter TypeScript/JS + Lua) any GitHub repository — base game data, libraries, or any mod — into one shared, multi-repo index.
-6. **Factorio Prototypes (`ingest_prototypes.py` → `prototypes_lancedb`)**: Parses Factorio's prototype definitions (recipes, items, entities, technologies, quality, planets) into one structured record each, holding exact numerical values for `search_factorio_prototypes`. The **vanilla baseline** (base + DLC); built locally and not shipped in the release zip.
+6. **Factorio Prototypes (`ingest_prototypes.py` → `prototypes_lancedb`)**: Parses Factorio's prototype definitions (recipes, items, entities, technologies, quality, planets) into one structured record each, holding exact numerical values for `search_factorio_prototypes`. The **vanilla baseline** (base + DLC), built from a `factorio --dump-data` export and shipped in the release zip.
 7. **FastMCP Server (`server.py`)**: The bridge that connects the underlying LanceDB vector stores to an LLM via the standard Model Context Protocol.
 
 For developer reference — module layout, the store schemas, the MCP tool list, and the validation playbook — see **[docs/](docs/README.md)**.

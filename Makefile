@@ -5,18 +5,18 @@ TAG ?= $(shell gh release view --json tagName -q .tagName)
 
 PY = uv run --no-sync python
 
-# The release/package set: the 5 stores bundled into factorio_lancedb.zip. This
-# MUST mirror server.py's RELEASE_STORES — prototypes_lancedb is built separately
-# (ingest-prototypes) and is deliberately NOT in the zip, so it's excluded here so
-# package-dbs/deploy-dbs don't ship a store the server never extracts.
-STORES = factorio_lancedb clusterio_lancedb wiki_lancedb forum_lancedb repo_lancedb
+# The release/package set: the 6 stores bundled into factorio_lancedb.zip. This
+# MUST mirror server.py's RELEASE_STORES so package-dbs/deploy-dbs ship exactly what
+# ensure_databases() extracts. prototypes_lancedb is built locally from a
+# `factorio --dump-data` export (make ingest-prototypes) before packaging.
+STORES = factorio_lancedb clusterio_lancedb wiki_lancedb forum_lancedb repo_lancedb prototypes_lancedb
 
 help:
 	@echo "Available commands:"
 	@echo "  make sync          - Install deps; auto-select CUDA torch if an NVIDIA GPU is present"
 	@echo "  make ingest-all    - (Re)build all 6 LanceDB stores (incremental/idempotent)"
 	@echo "  make compact       - Compact/finalize every data/*_lancedb store"
-	@echo "  make package-dbs   - Zip the 5 stores into factorio_lancedb.zip"
+	@echo "  make package-dbs   - Zip the 6 stores into factorio_lancedb.zip"
 	@echo "  make deploy-dbs    - Compact, package, and upload the final build to the latest release"
 	@echo "  make test          - Run the offline test suite (chunk-health strict)"
 	@echo "  make eval          - Retrieval recall@k: vector vs FTS vs hybrid (after re-ingest)"
@@ -63,7 +63,7 @@ ingest-all: ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-rep
 compact:
 	$(PY) maintenance/compact_lancedb.py
 
-# Bundle exactly the 5 stores into factorio_lancedb.zip (arcnames relative to
+# Bundle exactly the 6 stores into factorio_lancedb.zip (arcnames relative to
 # data/, so each <store>/ sits at the zip root). The asset name is load-bearing:
 # server.ensure_databases downloads exactly this from the latest release. Listing
 # the stores explicitly excludes any stray dirs (e.g. a leftover mod_lancedb).
