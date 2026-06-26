@@ -126,8 +126,11 @@ def run_checks():
     # prototypes_lancedb now ships in the release zip, so it's mandatory: a None
     # handle means a broken release/build and must FAIL (not a pass-with-note).
     if srv.table_prototypes is not None:
-        check("prototypes -> electronic-circuit recipe", lambda: has(
-            srv.search_factorio_prototypes(["electronic circuit recipe ingredients"], prototype_type="recipe", limit=3),
+        check("prototypes -> electronic-circuit recipe (2.0.76)", lambda: has(
+            srv.search_factorio_prototypes(["electronic circuit recipe ingredients"], prototype_type="recipe", limit=3, factorio_version="2.0.76"),
+            "electronic-circuit"))
+        check("prototypes -> electronic-circuit recipe (2.1.8)", lambda: has(
+            srv.search_factorio_prototypes(["electronic circuit recipe ingredients"], prototype_type="recipe", limit=3, factorio_version="2.1.8"),
             "electronic-circuit"))
     else:
         results.append({"name": "prototypes -> electronic-circuit recipe", "ok": False,

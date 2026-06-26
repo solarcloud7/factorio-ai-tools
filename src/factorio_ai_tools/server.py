@@ -42,8 +42,17 @@ def tool_enabled(tool_name: str) -> bool:
         return False
     return True
 
-# Initialize FastMCP server
-mcp = FastMCP("Factorio AI Tools", port=args.port)
+# Initialize FastMCP server.
+# host: mcp>=1.x no longer reads the FASTMCP_HOST env var on its own — FastMCP.__init__ passes an
+# explicit host default ("127.0.0.1") straight into its pydantic Settings, which overrides the env.
+# So read FASTMCP_HOST here and pass it through. Defaults to localhost (safe for stdio/local dev);
+# set FASTMCP_HOST=0.0.0.0 to bind all interfaces (required when running in a container so other
+# containers/hosts can reach the SSE port).
+mcp = FastMCP(
+    "Factorio AI Tools",
+    host=os.environ.get("FASTMCP_HOST", "127.0.0.1"),
+    port=args.port,
+)
 
 def optional_tool():
     def decorator(func):
@@ -182,10 +191,10 @@ Clusterio is a multi-server Factorio management ecosystem split into multiple pa
 
 When building a Clusterio plugin, you must implement logic across these layers, using `messages` (IPC) to pass data between the Factorio Lua runtime, the Node.js Instance, and the Master server.
 
-When writing Lua code, always use the `search_factorio_docs` tool to verify the syntax of the Control API or the properties of the Data Phase Prototypes. It requires an explicit `factorio_version` — pass `2.0.76` for Factorio 2.x, or `1.1.110` for legacy 1.1 (there is no "latest").
+When writing Lua code, always use the `search_factorio_docs` tool to verify the syntax of the Control API or the properties of the Data Phase Prototypes. It requires an explicit `factorio_version` — pass `2.0.76` for stable Factorio 2.x, `2.1.8` for the experimental release (what mod creators target to prepare), or `1.1.110` for legacy 1.1 (there is no "latest").
 When dealing with Node.js IPC or Plugin architecture, always use `search_clusterio_code`.
 For gameplay mechanics, formulas, ratios, fluid mechanics, or general game knowledge, use the `search_factorio_wiki` tool.
-For exact numerical values — recipe ingredients/amounts, crafting times, assembler speeds, technology research costs, quality tier bonuses, planet surface conditions — use `search_factorio_prototypes`. Combine it with `search_factorio_wiki` when a complete answer needs both precise values AND gameplay context.
+For exact numerical values — recipe ingredients/amounts, crafting times, assembler speeds, technology research costs, quality tier bonuses, planet surface conditions — use `search_factorio_prototypes`. It too requires an explicit `factorio_version` (`2.0.76` or `2.1.8`), since values change between releases. Combine it with `search_factorio_wiki` when a complete answer needs both precise values AND gameplay context.
 Never assume a method or concept exists without verifying it in the docs.
 You also have the ability to decode and encode Factorio Blueprint strings using `decode_factorio_blueprint` and `encode_factorio_blueprint`. You can use these tools to dynamically inspect, generate, or optimize factory layouts directly for the user!"""
 
@@ -526,7 +535,7 @@ def search_github_code(queries: list[str], repo_name: str = None, limit: int = 5
         return f"Error executing mod code search: {str(e)}"
 
 @optional_tool()
-def search_factorio_prototypes(queries: list[str], prototype_type: str = None, limit: int = 5) -> str:
+def search_factorio_prototypes(queries: list[str], prototype_type: str = None, limit: int = 5, factorio_version: str = None) -> str:
     """
     Search Factorio prototype definitions for exact numerical data: recipe ingredients
     and crafting times, assembler speeds and energy usage, technology research costs,
@@ -542,6 +551,10 @@ def search_factorio_prototypes(queries: list[str], prototype_type: str = None, l
 
     Args:
         queries: Semantic search queries.
+        factorio_version: REQUIRED — the exact Factorio version whose prototype values
+                          to search. Must be "2.0.76" (stable) or "2.1.8" (experimental).
+                          Values are version-specific (recipe categories, energy use, etc.
+                          change between releases), so there is no "latest" and no default.
         prototype_type: Optional filter. Umbrella values "item" (covers ammo,
                         module, gun, armor, capsule, …) and "entity" (covers
                         furnace, inserter, assembling-machine, …) expand to all
@@ -555,23 +568,31 @@ def search_factorio_prototypes(queries: list[str], prototype_type: str = None, l
     if not queries:
         return "No queries provided."
 
+    if factorio_version not in common.SUPPORTED_PROTOTYPE_VERSIONS:
+        valid = ", ".join(common.SUPPORTED_PROTOTYPE_VERSIONS)
+        return (f"Error: factorio_version is required and must be one of: {valid}. "
+                f"Prototype values are version-specific (e.g. recipe categories changed "
+                f"between 2.0.76 and 2.1.x), so pass a concrete version (there is no 'latest').")
+
     try:
         limit = min(max(1, limit), 20)
         query_vecs = model.encode(queries, normalize_embeddings=True)
         all_formatted_chunks = []
 
-        # An umbrella value ("item"/"entity") expands to every raw subtype actually
-        # stored (ammo/module/gun…, furnace/inserter…); a specific subtype or
+        # Always scope to the requested version (validated above). An umbrella value
+        # ("item"/"entity") then expands to every raw subtype actually stored
+        # (ammo/module/gun…, furnace/inserter…); a specific subtype or
         # recipe/fluid/technology/quality/… matches itself.
-        where = None
+        conditions = [f"version = '{factorio_version}'"]
         if prototype_type:
             group = common.PROTOTYPE_TYPE_GROUPS.get(prototype_type)
             if group:
                 vals = ", ".join("'" + t.replace("'", "''") + "'" for t in sorted(group))
-                where = f"prototype_type IN ({vals})"
+                conditions.append(f"prototype_type IN ({vals})")
             else:
                 safe_pt = prototype_type.replace("'", "''")
-                where = f"prototype_type = '{safe_pt}'"
+                conditions.append(f"prototype_type = '{safe_pt}'")
+        where = " AND ".join(conditions)
 
         for idx, query_vec in enumerate(query_vecs):
             results = hybrid_search(table_prototypes, queries[idx], query_vec, limit, where=where)

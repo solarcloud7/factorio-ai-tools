@@ -196,3 +196,97 @@ def test_zero_record_dump_refuses_to_touch_store(tmp_path, monkeypatch):
     # pass would otherwise delete the whole store). Only unsupported types here.
     _expect_main_aborts(tmp_path, monkeypatch,
                         json.dumps({"sound": {"s": {"type": "sound", "name": "s"}}}))
+
+
+# --- multi-version isolation (REAL ingest path, mocked embedder) ----------------
+# These exercise connect/ensure/diff/merge_insert/delete against a real tmp LanceDB
+# store, only stubbing the embedder, because the version-scoping bug class (a re-ingest
+# of one version deleting another's rows) can only surface against actual store state.
+
+def _write_dump(parent, version, protos):
+    d = parent / f"vanilla_{version}"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / "data-raw-dump.json"
+    p.write_text(json.dumps(protos), encoding="utf-8")
+    return str(p)
+
+
+def _rows(table):
+    return table.search().select(
+        ["prototype_type", "prototype_name", "version", "content"]).limit(10_000).to_list()
+
+
+def _recipe(name, amount, categories=None, singular=None):
+    d = {"type": "recipe", "name": name, "ingredients": [{"name": "a", "amount": amount}]}
+    if categories is not None:
+        d["categories"] = categories
+    if singular is not None:
+        d["category"] = singular
+    return d
+
+
+@pytest.fixture
+def mocked_store(tmp_path, monkeypatch):
+    """A real LanceDB store in tmp + a stub embedder, so the actual connect / ensure_table
+    / merge_insert / delete path runs without loading the model."""
+    import lancedb
+    import numpy as np
+
+    from factorio_ai_tools.ingest import common
+    monkeypatch.setattr(common, "load_embedder", lambda: object())
+    monkeypatch.setattr(common, "embed",
+                        lambda texts, model: np.zeros((len(texts), common.EMBEDDING_DIM), dtype="float32"))
+    store_dir = str(tmp_path / "prototypes_lancedb")
+    db = lancedb.connect(store_dir)
+    monkeypatch.setattr(common, "connect_store", lambda name: (db, store_dir))
+    return tmp_path, db, store_dir
+
+
+def test_two_versions_coexist(mocked_store, monkeypatch):
+    # Same (recipe, r) in BOTH versions with different content. The merge key includes
+    # version, so they must NOT clobber each other — both rows survive.
+    tmp_path, db, store_dir = mocked_store
+    v0 = _write_dump(tmp_path / "p0", "2.0.76",
+                     {"recipe": {"r": _recipe("r", 1, singular="crafting"),
+                                 "only076": _recipe("only076", 1, singular="crafting")}})
+    v1 = _write_dump(tmp_path / "p1", "2.1.8",
+                     {"recipe": {"r": _recipe("r", 7, categories=["crafting"])}})
+    monkeypatch.setenv("FACTORIO_DATA_DUMP", v0)
+    ingest_prototypes.main()
+    monkeypatch.setenv("FACTORIO_DATA_DUMP", v1)
+    ingest_prototypes.main()
+
+    rows = _rows(db.open_table("prototypes"))
+    r076 = [x for x in rows if x["prototype_name"] == "r" and x["version"] == "2.0.76"]
+    r218 = [x for x in rows if x["prototype_name"] == "r" and x["version"] == "2.1.8"]
+    assert len(r076) == 1 and len(r218) == 1, "both versions' (recipe, r) rows must coexist"
+    assert "a x1" in r076[0]["content"].replace("×", "x")
+    assert "a x7" in r218[0]["content"].replace("×", "x")
+    with open(store_dir + "/version.txt", encoding="utf-8") as f:
+        assert f.read().strip() == "2.0.76,2.1.8"
+
+
+def test_reingest_one_version_does_not_delete_another(mocked_store, monkeypatch):
+    # THE store-wipe guard: re-ingesting 2.1.8 (with an orphaned proto) must prune only
+    # 2.1.8's orphan and leave every 2.0.76 row untouched.
+    tmp_path, db, store_dir = mocked_store
+    v0 = _write_dump(tmp_path / "p0", "2.0.76",
+                     {"recipe": {"keep": _recipe("keep", 1, singular="crafting")}})
+    monkeypatch.setenv("FACTORIO_DATA_DUMP", v0)
+    ingest_prototypes.main()
+    # Seed 2.1.8 with x and y...
+    v1a = _write_dump(tmp_path / "p1a", "2.1.8",
+                      {"recipe": {"x": _recipe("x", 1, categories=["crafting"]),
+                                  "y": _recipe("y", 1, categories=["crafting"])}})
+    monkeypatch.setenv("FACTORIO_DATA_DUMP", v1a)
+    ingest_prototypes.main()
+    # ...then re-ingest 2.1.8 with only x (y becomes a 2.1.8 orphan).
+    v1b = _write_dump(tmp_path / "p1b", "2.1.8",
+                      {"recipe": {"x": _recipe("x", 1, categories=["crafting"])}})
+    monkeypatch.setenv("FACTORIO_DATA_DUMP", v1b)
+    ingest_prototypes.main()
+
+    names = {(x["version"], x["prototype_name"]) for x in _rows(db.open_table("prototypes"))}
+    assert ("2.1.8", "y") not in names, "2.1.8's orphan should be pruned"
+    assert ("2.1.8", "x") in names, "the surviving 2.1.8 proto must stay"
+    assert ("2.0.76", "keep") in names, "the OTHER version must be untouched (store-wipe guard)"

@@ -5,13 +5,17 @@ resolved ``data.raw`` as JSON, keyed ``type -> name -> prototype`` — and store
 structured text record per prototype holding exact numerical values. This is the
 **vanilla baseline** (base + Space Age DLC); a modded game's dump differs.
 
-Input path: ``FACTORIO_DATA_DUMP`` env, default
-``<repo_root>/factorio-export/vanilla_2.0.76/data-raw-dump.json``. Produce the dump
-with ``factorio --dump-data`` (see ``factorio-export/README.md``). Incremental by
-(prototype_type, prototype_name) SHA-256 via ``merge_insert`` upsert; writes
-``version.txt``.
+Multi-version: one record per (prototype_type, prototype_name, **version**). Each
+Factorio version is a separate ``--dump-data`` export under
+``factorio-export/vanilla_<ver>/``; by default ALL of them are ingested (set
+``FACTORIO_DATA_DUMP`` to ingest a single dump). Every version's rows are
+**version-scoped** — re-ingesting one version never touches another version's rows.
+Produce a dump with ``factorio --dump-data`` (see ``factorio-export/README.md``).
+Incremental by (type, name, version) SHA-256 via ``merge_insert`` upsert; writes a
+comma-joined ``version.txt`` of every version present in the store.
 """
 
+import glob
 import json
 import os
 import re
@@ -376,15 +380,18 @@ def _read_dump_version(dump_path):
     return m.group(1) if m else "unknown"
 
 
-def _delete_keys(table, keys):
-    """Delete rows for a list of (prototype_type, prototype_name) keys, chunked into
-    a few OR-predicates so a big version bump is a handful of commits, not N."""
+def _delete_keys(table, keys, version):
+    """Delete rows for a list of (prototype_type, prototype_name) keys WITHIN a single
+    version, chunked into a few OR-predicates so a big version bump is a handful of
+    commits, not N. The ``AND version`` clause is load-bearing: two versions can hold
+    the same (type, name), so dropping orphans of one version must never touch another's."""
+    sv = version.replace("'", "''")
     for i in range(0, len(keys), 200):
         clauses = []
         for pt, pn in keys[i:i + 200]:
             spt = pt.replace("'", "''")
             spn = pn.replace("'", "''")
-            clauses.append(f"(prototype_type = '{spt}' AND prototype_name = '{spn}')")
+            clauses.append(f"(prototype_type = '{spt}' AND prototype_name = '{spn}' AND version = '{sv}')")
         table.delete(" OR ".join(clauses))
 
 
@@ -393,19 +400,23 @@ def _write_version(db_path, version):
         f.write(version)
 
 
-def main():
-    dump_path = os.environ.get(
-        "FACTORIO_DATA_DUMP",
-        os.path.join(common.REPO_ROOT, "factorio-export", "vanilla_2.0.76", "data-raw-dump.json"),
-    )
+def _discover_dumps():
+    """Dumps to ingest: FACTORIO_DATA_DUMP (a single dump) if set, else every
+    factorio-export/vanilla_*/data-raw-dump.json present (one per Factorio version)."""
+    env = os.environ.get("FACTORIO_DATA_DUMP")
+    if env:
+        return [env]
+    base = os.path.join(common.REPO_ROOT, "factorio-export")
+    return sorted(glob.glob(os.path.join(base, "vanilla_*", "data-raw-dump.json")))
+
+
+def _load_dump(dump_path):
+    """Parse one dump, hard-stopping on a missing / corrupt / non-object file."""
     if not os.path.exists(dump_path):
         common.safe_print(f"ERROR: data-raw-dump.json not found at {dump_path}.")
         common.safe_print("Produce it with `factorio --dump-data` (see factorio-export/README.md),")
-        common.safe_print("then set FACTORIO_DATA_DUMP or place it at the default path above.")
+        common.safe_print("then set FACTORIO_DATA_DUMP or place it at factorio-export/vanilla_<ver>/.")
         raise SystemExit(1)
-
-    version = _read_dump_version(dump_path)
-    common.safe_print(f"Reading dump: {dump_path} (version {version})")
     try:
         with open(dump_path, "r", encoding="utf-8") as f:
             dump = json.load(f)
@@ -416,22 +427,29 @@ def main():
     if not isinstance(dump, dict):
         common.safe_print(f"ERROR: dump root is a {type(dump).__name__}, expected a JSON object (type -> name -> prototype).")
         raise SystemExit(1)
+    return dump
 
-    dry = common.dry_run_requested()
-    if dry:
-        common.safe_print("DRY RUN: audit only, no embed/write.")
-        db = db_path = table = None
-    else:
-        common.safe_print("Connecting to LanceDB...")
-        db, db_path = common.connect_store("prototypes_lancedb")
-        table = common.ensure_table(db, "prototypes", PrototypeRecord)
 
+def _ingest_version(table, dump_path, dry, get_model):
+    """Ingest ONE version's dump, scoped entirely to that version: diff against only
+    this version's stored rows, upsert on (type, name, version), and drop only this
+    version's orphans. Returns (changed: bool, version: str, n_final: int)."""
+    version = _read_dump_version(dump_path)
+    common.safe_print(f"--- Reading dump: {dump_path} (version {version}) ---")
+    dump = _load_dump(dump_path)
+
+    # Existing hashes for THIS version only — scan all rows, keep this version's. The
+    # version scoping is load-bearing: without it, ingesting 2.1.8 would see 2.0.76's
+    # rows as "orphans" (absent from the 2.1.8 dump) and delete them.
     existing_hashes = {}
     if table is not None and len(table) > 0:
-        rows = table.search().select(["prototype_type", "prototype_name", "content_hash"]).limit(500_000).to_list()
+        rows = table.search().select(
+            ["prototype_type", "prototype_name", "version", "content_hash"]
+        ).limit(2_000_000).to_list()
         for row in rows:
-            existing_hashes[(row["prototype_type"], row["prototype_name"])] = row["content_hash"]
-    common.safe_print(f"Existing records: {len(existing_hashes)}")
+            if row["version"] == version:
+                existing_hashes[(row["prototype_type"], row["prototype_name"])] = row["content_hash"]
+    common.safe_print(f"Existing {version} records: {len(existing_hashes)}")
 
     # ---- Walk the resolved data.raw (type -> name -> prototype). Only wanted types
     # format to content; everything else (graphics/sound/particles/...) is skipped.
@@ -459,18 +477,18 @@ def main():
             }
             auditor.add(content, source=pname, node_type=ptype)
 
-    auditor.note_source("data-raw-dump.json", os.path.getsize(dump_path), len(final))
+    auditor.note_source(os.path.basename(dump_path), os.path.getsize(dump_path), len(final))
 
-    # Refuse to touch the store if the dump parsed but produced ZERO records (an
-    # empty/wrong dump, or a future format change that breaks every formatter).
-    # Without this the orphan pass below would delete every existing row, silently
-    # wiping the whole store. note_source/summary only WARN; this hard-stops.
+    # Refuse to touch this version if the dump parsed but produced ZERO records (an
+    # empty/wrong dump, or a format change that breaks every formatter). Without this
+    # the orphan pass below would delete every existing row for this version, silently
+    # wiping it. note_source/summary only WARN; this hard-stops.
     if not final:
-        common.safe_print("ERROR: the dump parsed but produced 0 prototype records — refusing to touch the store.")
-        common.safe_print("Check FACTORIO_DATA_DUMP points at a real Factorio data-raw-dump.json.")
+        common.safe_print(f"ERROR: the {version} dump parsed but produced 0 prototype records — refusing to touch the store.")
+        common.safe_print(f"Check {dump_path} is a real Factorio data-raw-dump.json.")
         raise SystemExit(1)
 
-    # ---- Diff against what's stored: collect changed+new to (re)embed, orphans to drop.
+    # ---- Diff against this version's stored rows: changed+new to (re)embed, orphans to drop.
     all_records = []
     skipped_count = changed_count = added_count = 0
     for (pt, pn), rec in final.items():
@@ -489,39 +507,76 @@ def main():
             "version": version,
             "content_hash": rec["content_hash"],
         })
-    # `final` is non-empty here (guarded above), so this can never delete the store.
+    # `final` is non-empty here (guarded above), so this can never delete the version.
     orphan_keys = sorted(set(existing_hashes) - set(final)) if (table is not None and existing_hashes) else []
 
     common.safe_print(
-        f"Skipped {skipped_count} unchanged | {changed_count} changed | "
+        f"[{version}] Skipped {skipped_count} unchanged | {changed_count} changed | "
         f"{added_count} new | {len(orphan_keys)} orphaned | {skipped_unsupported} unsupported types"
     )
     auditor.summary()
     if dry:
-        return
+        return False, version, len(final)
 
     # ---- Embed FIRST (before any table mutation), then upsert atomically with
-    # merge_insert keyed on (type, name) — updates changed rows, inserts new ones,
-    # leaves unchanged rows untouched. No delete-before-add window (#3); no per-row
-    # delete loop (#545). Orphans (gone from the dump) are removed separately.
+    # merge_insert keyed on (type, name, VERSION) — so the same (type, name) under a
+    # different version inserts a NEW row instead of clobbering the other version's.
+    # No delete-before-add window; this version's orphans drop separately below.
     if all_records:
-        model_emb = common.load_embedder()
+        model_emb = get_model()
         for i in range(0, len(all_records), 100):
-            common.safe_print(f"Embedding batch {i} to {i + 100}...")
+            common.safe_print(f"[{version}] Embedding batch {i} to {i + 100}...")
             batch = all_records[i:i + 100]
             embeddings = common.embed([r["content"] for r in batch], model_emb)
             for j, rec in enumerate(batch):
                 rec["vector"] = embeddings[j].tolist()
-        (table.merge_insert(["prototype_type", "prototype_name"])
+        (table.merge_insert(["prototype_type", "prototype_name", "version"])
             .when_matched_update_all()
             .when_not_matched_insert_all()
             .execute(all_records))
 
     if orphan_keys:
-        _delete_keys(table, orphan_keys)
-        common.safe_print(f"Removed {len(orphan_keys)} orphaned records.")
+        _delete_keys(table, orphan_keys, version)
+        common.safe_print(f"[{version}] Removed {len(orphan_keys)} orphaned records.")
 
-    if all_records or orphan_keys:
+    return bool(all_records or orphan_keys), version, len(final)
+
+
+def main():
+    dumps = _discover_dumps()
+    if not dumps:
+        common.safe_print("ERROR: no prototype dumps found.")
+        common.safe_print("Place a `factorio --dump-data` export at factorio-export/vanilla_<ver>/data-raw-dump.json")
+        common.safe_print("(see factorio-export/README.md), or set FACTORIO_DATA_DUMP to one. Nothing was ingested.")
+        raise SystemExit(1)
+
+    dry = common.dry_run_requested()
+    if dry:
+        common.safe_print("DRY RUN: audit only, no embed/write.")
+        db = db_path = table = None
+    else:
+        common.safe_print("Connecting to LanceDB...")
+        db, db_path = common.connect_store("prototypes_lancedb")
+        table = common.ensure_table(db, "prototypes", PrototypeRecord)
+
+    # Lazy embedder: loaded the first time a version actually has changes, then reused.
+    model_holder = {}
+    def get_model():
+        if "m" not in model_holder:
+            common.safe_print("Loading embedder...")
+            model_holder["m"] = common.load_embedder()
+        return model_holder["m"]
+
+    common.safe_print(f"Ingesting {len(dumps)} dump(s): {', '.join(_read_dump_version(d) for d in dumps)}")
+    any_change = False
+    for dump_path in dumps:
+        changed, _version, _n_final = _ingest_version(table, dump_path, dry, get_model)
+        any_change = any_change or changed
+    if dry:
+        return
+
+    # Rebuild the FTS index ONCE over the whole store (all versions) after all upserts.
+    if any_change:
         try:
             table.create_fts_index("content", replace=True)
         except Exception as e:
@@ -529,10 +584,12 @@ def main():
     else:
         common.safe_print("Database is perfectly up to date!")
 
-    _write_version(db_path, version)
+    # version.txt reflects EVERY version present in the store (e.g. "2.0.76,2.1.8").
+    versions_in_store = sorted({r["version"] for r in table.search().select(["version"]).limit(2_000_000).to_list()})
+    _write_version(db_path, ",".join(versions_in_store))
     common.safe_print(
-        f"Ingestion complete! {len(all_records)} records embedded, "
-        f"{len(orphan_keys)} removed. Total in store: {len(final)}."
+        f"Ingestion complete! Versions in store: {', '.join(versions_in_store)}. "
+        f"Total records across versions: {len(table)}."
     )
 
 

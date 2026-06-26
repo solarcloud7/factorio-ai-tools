@@ -16,12 +16,12 @@ index or on a transient error.
 
 | Tool | Signature | Store | Filters |
 |---|---|---|---|
-| `search_factorio_docs` | `(queries, class_filter=None, limit=5, factorio_version)` | factorio | `class_name`, `version` (**required**: `1.1.110` or `2.0.76`; no `latest`) |
+| `search_factorio_docs` | `(queries, class_filter=None, limit=5, factorio_version)` | factorio | `class_name`, `version` (**required**: `1.1.110`, `2.0.76`, or `2.1.8`; no `latest`) |
 | `search_clusterio_code` | `(queries, node_type=None, plugin=None, limit=5)` | clusterio | `node_type`, `plugin` (matched against `file_path`) |
 | `search_factorio_wiki` | `(queries, limit=5)` | wiki | — |
 | `search_factorio_forums` | `(queries, limit=5)` | forum | — |
 | `search_github_code` | `(queries, repo_name=None, limit=5)` | repo | `repo_name` (matched against `repo_url`) |
-| `search_factorio_prototypes` | `(queries, prototype_type=None, limit=5)` | prototypes | `prototype_type` (umbrella `item`/`entity` expand to subtypes) |
+| `search_factorio_prototypes` | `(queries, prototype_type=None, limit=5, factorio_version)` | prototypes | `prototype_type` (umbrella `item`/`entity` expand to subtypes), `version` (**required**: `2.0.76` or `2.1.8`; values change between releases) |
 
 Filter values are escaped before use: single quotes are doubled for the SQL
 literal, and `LIKE` filters (`plugin`, `repo_name`) escape `% _ \` via

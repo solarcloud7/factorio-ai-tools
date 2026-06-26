@@ -616,9 +616,17 @@ PROTOTYPE_TYPE_GROUPS = {
 # Concrete, hard-coded versions only. The moving "latest" label is deliberately NOT
 # used — it drifted (latest silently became 2.1.x while callers expected an earlier
 # release), so callers must query by a concrete version. 1.1.110 is legacy 1.1;
-# 2.0.76 is the pinned 2.x baseline. The docs site serves per-version URLs
+# 2.0.76 is the stable 2.x baseline; 2.1.8 is the experimental release mod creators
+# are already targeting to prepare their mods. The docs site serves per-version URLs
 # (lua-api.factorio.com/<ver>/), so each is scraped concretely.
-SUPPORTED_FACTORIO_VERSIONS = ("1.1.110", "2.0.76")
+SUPPORTED_FACTORIO_VERSIONS = ("1.1.110", "2.0.76", "2.1.8")
+
+# Versions the prototypes store holds. This is a SUBSET of SUPPORTED_FACTORIO_VERSIONS:
+# prototype values come from a `factorio --dump-data` export, and there's no practical
+# vanilla dump for the 1.1 era (different game/schema), so 1.1.110 is docs-only. Each
+# 2.x version is a separate dump (factorio-export/vanilla_<ver>/) ingested as its own
+# version-scoped rows; search_factorio_prototypes REQUIRES one of these.
+SUPPORTED_PROTOTYPE_VERSIONS = ("2.0.76", "2.1.8")
 
 _LANG_CACHE = {}
 
