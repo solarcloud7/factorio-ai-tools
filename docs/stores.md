@@ -62,7 +62,8 @@ Columns: `prototype_type`, `prototype_name`, `category`, `content`, `version`,
 own `factorio --dump-data` JSON export (the fully-resolved `data.raw`, env
 `FACTORIO_DATA_DUMP`) — no Lua parsing. The **vanilla baseline** (base + official
 DLC); modded games change `data.raw`, so a modded game differs. Built locally via
-`make ingest-prototypes` and **not** shipped in the release zip. Writes `version.txt`.
+`make ingest-prototypes` (from a `--dump-data` export), then shipped in the release
+zip like the other stores. Writes `version.txt`.
 
 ## node_type vocabulary
 

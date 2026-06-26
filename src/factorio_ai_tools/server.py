@@ -65,10 +65,10 @@ else:
     DATA_DIR = USER_DATA_DIR
 
 # Stores bundled in the release zip — used to trigger the bootstrap download.
-# prototypes_lancedb is built separately by `make ingest-prototypes` and is NOT
-# yet included in the release zip, so it must NOT be listed here or every user
-# without it will re-download the full zip on every server start indefinitely.
-RELEASE_STORES = ["factorio_lancedb", "clusterio_lancedb", "wiki_lancedb", "forum_lancedb", "repo_lancedb"]
+# All six ship in factorio_lancedb.zip; ensure_databases() extracts any that are
+# missing. MUST stay in sync with the Makefile STORES var that packages the zip:
+# a store listed here but absent from the zip would re-download it on every start.
+RELEASE_STORES = ["factorio_lancedb", "clusterio_lancedb", "wiki_lancedb", "forum_lancedb", "repo_lancedb", "prototypes_lancedb"]
 
 def ensure_databases():
     missing = [s for s in RELEASE_STORES if not os.path.exists(os.path.join(DATA_DIR, s))]
