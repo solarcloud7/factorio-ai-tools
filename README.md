@@ -54,16 +54,29 @@ If you have Docker Desktop installed, you can simply pull the pre-packaged conta
 }
 ```
 
-### Method 3: Global SSE Server (Save RAM/VRAM)
-By default, standard `stdio` MCP execution spawns a completely separate Python process for *every single client connection*. Because this server uses PyTorch and `sentence-transformers`, every connection will load the embedding model again, consuming roughly ~500MB of RAM/VRAM per instance. 
+### Method 3: Shared SSE Server (one instance for every client)
+By default, standard `stdio` MCP execution spawns a completely separate Python process for *every single client connection*. Because this server uses PyTorch and `sentence-transformers`, every connection reloads the embedding model and reopens the stores (~1 GB of RAM/VRAM per instance).
 
-If you want to use the MCP server across multiple IDEs or workspaces simultaneously without duplicating memory, you can run a single global HTTP SSE server in the background:
+Instead, run **one** shared SSE server and point every client (multiple IDEs, Claude Desktop, other containers) at it. The canonical instance is the `compose.yml` container:
 
 ```powershell
-uv run factorio-ai-tools --sse --port 8000
+docker network create factorio-shared   # one-time (external network)
+make mcp                                 # docker compose up -d  -> SSE on :8000
 ```
 
-Then, configure your IDE or Claude client to connect to the SSE endpoint (e.g., `http://localhost:8000/sse`) instead of executing the CLI via `stdio`.
+Then add a single user-global entry in Claude Code:
+
+```powershell
+claude mcp add -s user --transport sse factorio-ai-tools http://localhost:8000/sse
+```
+
+…or, for Claude Desktop, in `claude_desktop_config.json`:
+
+```json
+"factorio-ai-tools": { "command": "cmd", "args": ["/c", "npx", "-y", "mcp-remote", "http://localhost:8000/sse"] }
+```
+
+For a quick no-Docker server, `make mcp-host` (`uv run factorio-ai-tools --sse --port 8000`) serves the same endpoint from a host process — but it binds the same `:8000`, so run the container **or** the host process, not both. Full setup (the external network, `FASTMCP_HOST`, connecting other compose projects, operational notes) is in **[docs/serving.md](docs/serving.md)**.
 
 ### Selective Tool Loading (Optional)
 By default, the server loads all available tools. If you only want to expose specific tools to your LLM, you can use the `--enable-tools` or `--disable-tools` arguments.

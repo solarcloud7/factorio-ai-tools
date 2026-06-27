@@ -1,4 +1,4 @@
-.PHONY: help sync compact status dump-data clean ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos ingest-prototypes package-dbs deploy-dbs test eval smoke mcp inspect
+.PHONY: help sync compact status dump-data clean ingest-all ingest-factorio ingest-wiki ingest-forum ingest-clusterio ingest-repos ingest-prototypes package-dbs deploy-dbs test eval smoke mcp mcp-logs mcp-down mcp-host inspect
 
 # Latest GitHub release tag; override with `make deploy-dbs TAG=vX.Y.Z`.
 TAG ?= $(shell gh release view --json tagName -q .tagName)
@@ -24,7 +24,10 @@ help:
 	@echo "  make test          - Run the offline test suite (chunk-health strict)"
 	@echo "  make eval          - Retrieval recall@k: vector vs FTS vs hybrid (after re-ingest)"
 	@echo "  make smoke         - Release smoke test: install published wheel, fresh download, assert tools"
-	@echo "  make mcp           - Start the MCP server over SSE (port 8000)"
+	@echo "  make mcp           - Start the shared MCP container (SSE :8000, the canonical single instance)"
+	@echo "  make mcp-logs      - Follow the shared MCP container's logs"
+	@echo "  make mcp-down      - Stop the shared MCP container"
+	@echo "  make mcp-host      - Serve MCP as a bare host process instead (no Docker; conflicts on :8000)"
 	@echo "  make inspect       - Launch MCP Inspector (stdio; self-contained)"
 
 ingest-factorio:
@@ -121,7 +124,22 @@ eval:
 smoke:
 	$(PY) maintenance/smoke_release.py $(if $(VERSION),--version $(VERSION),) $(if $(LOCAL),--local,)
 
+# Serving the MCP. The CANONICAL instance is the shared Docker container (compose.yml):
+# one process on the factorio-shared network, reached by name by every consumer (the
+# Discord bot, Claude Desktop), with the model + 6 stores resident once. `make mcp` starts
+# THAT, detached (it has restart: unless-stopped + a healthcheck). The bare host-process
+# path (mcp-host) is kept for quick no-Docker server dev, but it binds the SAME host :8000
+# as the container — run one or the other, never both.
 mcp:
+	docker compose up -d
+
+mcp-logs:
+	docker compose logs -f factorio-ai-tools
+
+mcp-down:
+	docker compose down
+
+mcp-host:
 	.\start_mcp_server.bat
 
 inspect:
