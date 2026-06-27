@@ -43,7 +43,8 @@ A FastMCP server. It opens each store in its own try/except (a missing store
 degrades only the affected tool), loads the embedding model once, and exposes the
 search/utility tools and the expert prompt documented in [tools.md](tools.md).
 Search routes through `common.hybrid_search`. Runs over stdio by default, or SSE
-with `--sse`.
+with `--sse`; the canonical multi-client deployment is the shared SSE container
+(`compose.yml`) on the external `factorio-shared` network — see [serving.md](serving.md).
 
 ### Maintenance — [maintenance/](../maintenance)
 | Script | Role |
@@ -92,7 +93,7 @@ then ship:
 | `make test` | Run the offline test suite. |
 | `make eval` | Retrieval recall@k (vector vs FTS vs hybrid) on the golden set. |
 | `make smoke` | Release smoke test: install the published wheel into an isolated venv, force a fresh DB download, and assert every tool ([maintenance/smoke_release.py](../maintenance/smoke_release.py)). |
-| `make mcp` | Start the MCP server over SSE (port 8000). |
+| `make mcp` | Start the shared MCP container (SSE `:8000`, the canonical single instance); `make mcp-logs` / `make mcp-down` manage it, `make mcp-host` serves from a bare host process instead. See [serving.md](serving.md). |
 | `make inspect` | Launch MCP Inspector (stdio, self-contained) via `npx`. |
 
 The asset name `factorio_lancedb.zip` is load-bearing: `server.ensure_databases()`

@@ -34,8 +34,10 @@ uv run python maintenance/compact_lancedb.py --check
 # Run the MCP server (stdio transport)
 uv run factorio-ai-tools          # or: uv run python -m factorio_ai_tools.server
 
-# Run the MCP server over SSE (port 8000) — the canonical way via the Makefile:
-make mcp                          # or: uv run factorio-ai-tools --sse --port 8000
+# Serve over SSE on :8000. `make mcp` runs the canonical SHARED container (compose.yml;
+# one instance for all clients) + `make mcp-logs` / `make mcp-down`. `make mcp-host` is
+# the no-Docker host process (same :8000 — run one or the other). See docs/serving.md.
+make mcp                          # docker compose up -d
 ```
 
 ```powershell
@@ -47,7 +49,7 @@ make test                          # or: uv run python -m pytest -q
 make eval                          # or: uv run python maintenance/eval_retrieval.py
 ```
 
-There is an offline pytest suite (`tests/`, run via `make test`) and a local-only retrieval eval (`make eval`, golden set at `tests/golden/queries.yaml`); there is no linter or build step beyond the above. Deployment is the published PyPI wheel (`uvx`/`pip`, auto-published by `.github/workflows/pypi-publish.yml` on GitHub release-publish via trusted publishing) or the `Dockerfile` (runs the SSE server on port 8000); either way the stores are fetched at runtime by `ensure_databases()` from the release zip. Validation gates, the dry-run protocol, and known limitations live in `docs/rag-pipeline-playbook.md`.
+There is an offline pytest suite (`tests/`, run via `make test`) and a local-only retrieval eval (`make eval`, golden set at `tests/golden/queries.yaml`); there is no linter or build step beyond the above. Deployment is the published PyPI wheel (`uvx`/`pip`, auto-published by `.github/workflows/pypi-publish.yml` on GitHub release-publish via trusted publishing) or the `Dockerfile` (runs the SSE server on port 8000); either way the stores are fetched at runtime by `ensure_databases()` from the release zip. For local multi-client use, `compose.yml` runs **one shared SSE instance** on the external `factorio-shared` network (`FASTMCP_HOST=0.0.0.0`, serving this checkout's `./data`) — see `docs/serving.md`. Validation gates, the dry-run protocol, and known limitations live in `docs/rag-pipeline-playbook.md`.
 
 To test a tool manually, import `factorio_ai_tools.server` in a REPL — the `@mcp.tool()` functions are plain callables. Note that importing it eagerly loads the SentenceTransformer model and opens all six LanceDB connections (factorio / clusterio / wiki / forum / repo / prototypes).
 
